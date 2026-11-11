@@ -264,7 +264,7 @@ function attachHandwriting(canvas, pageId) {
   const onMove = (e) => {
     if (!active) return;
     active.points.push(pos(e));
-    notebook.setStrokes(pageId, (notebook.getStrokes(page.id) || []).map((s) =>
+    notebook.setStrokes(pageId, (notebook.getStrokes(pageId) || []).map((s) =>
       s.id === active.id ? active.toJSON() : s));
     renderStrokeLayer(pageId);
   };

@@ -64,10 +64,11 @@ function mmToPx(mm) { return mm * (96 / 25.4); }
 /**
  * Build variable-width stroke geometry for a single stroke.
  * Returns Float32Array interleaved: position(x,y), halfWidth, signedDist,
- * color(r,g,b,a), pressure.  Stride = 10 floats = 40 bytes.
+ * color(r,g,b,a), pressure.  Stride = 9 floats = 36 bytes.
  *
- * Each segment becomes a quad (triangle strip of 4 corners):
- *   p0 - w0*n, p1 - w1*n, p0 + w0*n, p1 + w1*n
+ * Each segment becomes a quad (two triangles):
+ *   A = p0 - w0*n, B = p1 - w1*n, C = p0 + w0*n, D = p1 + w1*n
+ *   tri1: A B C   tri2: B D C
  * where n is the segment normal. In the fragment shader,
  * across = abs(signedDist)/halfWidth  (0 = centreline, 1 = edge).
  */

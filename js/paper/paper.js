@@ -1,3 +1,13 @@
+// DEPRECATED — Canvas 2D paper path.
+//
+// This module is no longer used by the live renderer. The page image is now
+// produced entirely by the WebGPU pipeline (js/gpu/renderer.js + WGSL shaders).
+// Canvas 2D is not used as a primary or fallback renderer for the page.
+//
+// Kept only so existing unit tests (test/paper.test.js) continue to run;
+// new code should import from js/paper/templates.js, js/paper/sizes.js and
+// js/units.js instead.
+
 const MM_TO_PX = 96 / 25.4;
 const templates = {
   'asia-b5-ruled': { id: 'asia-b5-ruled', name: 'Asia B5 Ruled', widthMm: 182, heightMm: 257, marginMm: 25, topMarginMm: 25, bottomMarginMm: 20, lineSpacingMm: 8, lineColor: '#9ca3af', marginLineColor: '#b91c1c', bgColor: '#fdfbf7' },
