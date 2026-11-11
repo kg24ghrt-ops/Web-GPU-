@@ -1,0 +1,13 @@
+{
+  "name": "notebook",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "jsdom": "^31.0.0",
+    "playwright-core": "^1.65.0"
+  }
+}

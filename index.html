@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="css/index.css">
+  <title>Notebook</title>
+</head>
+<body>
+  <header class="toolbar">
+    <div class="toolbar__group">
+      <button type="button" data-action="new-page" aria-label="New Page">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="18"/></svg>
+        New Page
+      </button>
+      <button type="button" data-action="delete-page" aria-label="Delete Page">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        Delete Page
+      </button>
+      <select name="paper" id="paper-template" aria-label="Paper template">
+        <option value="asia-b5-ruled">Asia B5 Ruled</option>
+        <option value="school-ruled">School Writing Paper</option>
+        <option value="blank">Blank Paper</option>
+      </select>
+    </div>
+    <div class="toolbar__group">
+      <button type="button" data-action="mode-text" aria-label="Text mode">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5L3 19h18L12 5z"/><path d="M7 12h10"/><path d="M7 16h6"/></svg>
+        Text
+      </button>
+      <button type="button" data-action="mode-handwriting" aria-label="Handwriting mode">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3l2.83 6.74a2 2 0 0 1 0 1.48l-7 7a2 2 0 0 1-1.48 0l-4.87-4.87L3 17l6.74 2.83a2 2 0 0 1 1.48 0l4.87-4.87L17 3z"/><path d="M20.5 19.5L20 21l-1-1 1.5-0.5z"/></svg>
+        Handwriting
+      </button>
+    </div>
+    <div class="toolbar__group toolbar__group--right">
+      <button type="button" data-action="export-png" aria-label="Save PNG">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Save PNG
+      </button>
+      <span id="status" aria-live="polite">Ready</span>
+    </div>
+  </header>
+  <main class="notebook">
+    <nav class="page-list" aria-label="Pages">
+      <ul class="page-list__items"></ul>
+    </nav>
+    <div class="page-view" id="page-view"></div>
+  </main>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
