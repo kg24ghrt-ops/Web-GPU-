@@ -227,7 +227,9 @@ async function load() {
   }
   setMode(settings.get('ui.mode'));
   await renderPage(notebook.currentPage());
-  setStatus('Ready');
+  if (webgpuOk) {
+    setStatus('Ready');
+  }
 }
 
 async function newPage() {

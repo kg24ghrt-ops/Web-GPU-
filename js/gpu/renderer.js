@@ -320,7 +320,7 @@ export class WebGpuRenderer {
 
     this._paperTexture = device.createTexture({
       size: [w, h, 1],
-      format: 'rgba32float',
+      format: 'rgba8unorm',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
     });
     this._inkTexture = device.createTexture({
@@ -541,7 +541,7 @@ export class WebGpuRenderer {
 
     const exportPaper = device.createTexture({
       size: [w, h, 1],
-      format: 'rgba32float',
+      format: 'rgba8unorm',
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
     });
     const exportInk = device.createTexture({

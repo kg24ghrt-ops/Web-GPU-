@@ -2,7 +2,7 @@
 // Generates a photorealistic procedural paper sheet: off-white base colour
 // with nonuniform distribution, multi-scale fibres, paper tooth, crease /
 // fold height variation, subtle staining, fine surface roughness and a
-// detailed height field for lighting. Output texture: RGBA32Float
+// detailed height field for lighting. Output texture: RGBA8Unorm
 // rgb = base colour, a = height (surface).
 //
 // Uniform layout (shared, 24 x f32 = 96 bytes):
@@ -37,7 +37,7 @@ struct Uniforms {
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-@group(0) @binding(1) var paperTex: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(1) var paperTex: texture_storage_2d<rgba8unorm, write>;
 
 fn hash2(p: vec2<f32>) -> f32 {
   let x = fract(sin(dot(p, vec2<f32>(12.9898, 78.233))) * 43758.5453);
