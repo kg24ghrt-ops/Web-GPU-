@@ -1,0 +1,5 @@
+# Build outputs (staged by CI, never committed)
+dist/
+node_modules/
+.env
+*.log

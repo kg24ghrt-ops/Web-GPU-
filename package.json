@@ -4,10 +4,14 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "build": "node scripts/stage-frontend.js",
     "test": "node --test"
   },
   "dependencies": {
     "jsdom": "^31.0.0",
     "playwright-core": "^1.65.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
   }
 }
