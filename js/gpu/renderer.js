@@ -397,6 +397,16 @@ export class WebGpuRenderer {
     const h = this._pageH;
     this._createdResourcesForSize(device, w, h);
 
+    // Write uniforms so the shaders receive page size, ruling, margin,
+    // lighting and seed data on every display frame (not just PNG export).
+    this._writeUniforms(device, w, h,
+      this._template ? mmToPx(this._template.lineSpacingMm) : 8 * 3.7795,
+      this._template ? mmToPx(this._template.lineWidthMm) : 0.5 * 3.7795,
+      this._template ? mmToPx(this._template.topMarginMm) : 25 * 3.7795,
+      this._template ? mmToPx(this._template.marginMm) : 25 * 3.7795,
+      this._template ? mmToPx(1.2) : 1.2 * 3.7795
+    );
+
     if (this._dirty) {
       this._uploadStrokes(device);
       this._dirty = false;
