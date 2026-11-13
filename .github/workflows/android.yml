@@ -68,18 +68,17 @@ jobs:
           api-level: 34
           platform-tools: true
 
-      - name: Setup Android NDK
-        uses: android-actions/setup-ndk@v2
-        with:
-          ndk-version: r27c
+      - name: Install Android NDK
+        run: |
+          sdkmanager --install "ndk;27.0.12077973" >/dev/null 2>&1 || sdkmanager --install "ndk;27.0.12077973"
 
       - name: Export Android environment variables
         run: |
           echo "ANDROID_HOME=${ANDROID_HOME}" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME}" >> $GITHUB_ENV
-          echo "ANDROID_NDK_PATH=${ANDROID_NDK_PATH}" >> $GITHUB_ENV
-          echo "ANDROID_NDK_ROOT=${ANDROID_NDK_ROOT}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.0.12077973" >> $GITHUB_ENV
+          echo "ANDROID_NDK_PATH=${ANDROID_SDK_ROOT}/ndk/27.0.12077973" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/27.0.12077973" >> $GITHUB_ENV
           echo "JAVA_HOME=${JAVA_HOME}" >> $GITHUB_ENV
 
       - name: Print toolchain versions
