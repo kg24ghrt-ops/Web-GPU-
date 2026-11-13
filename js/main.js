@@ -11,6 +11,7 @@ import { ensureFonts, FONT_FAMILY, FONT_SIZE, LINE_HEIGHT } from './typography/t
 import { TextEditor } from './editor/text-editor.js';
 import { Stroke } from './handwriting/handwriting.js';
 import { WebGpuRenderer, PEN_MATERIALS } from './gpu/renderer.js';
+import { WebGL2Renderer } from './gpu/webgl2.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const status = $('#status');
@@ -103,7 +104,13 @@ async function initRenderer() {
     onStatus: (msg) => setStatus(msg),
   });
   await renderer.init();
-  return renderer.available;
+  if (renderer.available) return true;
+
+  // WebGPU unavailable on this device (e.g. Android / Mali). Fall back to
+  // WebGL 2.0 so the notebook still renders.
+  try { renderer.destroy(); } catch { /* ignore */ }
+  renderer = new WebGL2Renderer({ canvas: gpuCanvas, onStatus: setStatus });
+  return await renderer.init();
 }
 
 async function renderPage(page) {
