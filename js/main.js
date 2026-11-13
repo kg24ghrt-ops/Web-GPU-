@@ -214,7 +214,14 @@ async function load() {
   }
   renderPageList();
   templateSelect.value = notebook.currentPage().paperType || settings.get('paper.type');
-  const webgpuOk = await initRenderer();
+  let webgpuOk = false;
+  try {
+    webgpuOk = await initRenderer();
+  } catch (err) {
+    const e = wrap(err, { module: 'gpu', operation: 'initRenderer', retryable: true });
+    logger.error('gpu', 'initRenderer', e.toJSON());
+    setStatus('WebGPU initialization failed: ' + (e.cause || e.message), { error: true });
+  }
   if (!webgpuOk) {
     setStatus('WebGPU unavailable on this device', { error: true });
   }

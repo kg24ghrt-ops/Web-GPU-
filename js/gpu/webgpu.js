@@ -57,6 +57,11 @@ export async function detectCapabilities() {
     logger.warn('gpu', 'WebGPU unavailable: navigator.gpu missing');
     return report;
   }
+  if (typeof window !== 'undefined' && !window.isSecureContext) {
+    report.reason = 'WebGPU requires a secure context (HTTPS or localhost); file:// is not supported';
+    logger.warn('gpu', 'WebGPU unavailable: not a secure context');
+    return report;
+  }
   try {
     const adapter = await navigator.gpu.requestAdapter({
       powerPreference: 'high-performance',

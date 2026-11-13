@@ -92,7 +92,7 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
   let lineColour = mix(
     vec3<f32>(uniforms.lineColorR, uniforms.lineColorG, uniforms.lineColorB),
     vec3<f32>(uniforms.marginLineColorR, uniforms.marginLineColorG, uniforms.marginLineColorB),
-    marginAlpha > lineAlpha ? 1.0 : 0.0
+    select(0.0, 1.0, marginAlpha > lineAlpha)
   );
   let paperWithRule = mix(
     lit,

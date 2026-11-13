@@ -2,7 +2,7 @@
 // Generates a procedural paper sheet: off-white base colour with subtle
 // nonuniform distribution, multi-scale fibres, fibre orientation/density
 // variation, fine surface roughness and a height field for lighting.
-// Output texture: RGBA16Float  rgb = base colour, a = height (surface).
+// Output texture: RGBA32Float  rgb = base colour, a = height (surface).
 //
 // Uniform layout (shared, 24 x f32 = 96 bytes):
 //  0 pageWidthPx  1 pageHeightPx  2 lineSpacingPx  3 lineWidthPx
@@ -36,7 +36,7 @@ struct Uniforms {
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-@group(0) @binding(1) var paperTex: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(1) var paperTex: texture_storage_2d<rgba32float, write>;
 
 fn hash2(p: vec2<f32>) -> f32 {
   let x = fract(sin(dot(p, vec2<f32>(12.9898, 78.233))) * 43758.5453);

@@ -160,6 +160,7 @@ export class WebGpuRenderer {
     this._shaders = null;
     this._initialized = false;
     this._lost = false;
+    this._canvasFormat = null;
 
     // Document model (plain data, GPU-independent).
     this._pageW = 0;
@@ -203,17 +204,28 @@ export class WebGpuRenderer {
     }
 
     this._ctx = this._canvas.getContext('webgpu');
+    const canvasFormat = this._report?.preferredCanvasFormat || 'rgba8unorm';
+    this._canvasFormat = canvasFormat;
     this._ctx.configure({
       device,
-      format: 'rgba8unorm',
+      format: canvasFormat,
       alphaMode: 'premultiplied',
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
-    await this._createPipelines(device);
-    this._createSamplers(device);
-    this._createUniformBuffer(device);
-    this._createdResourcesForSize(device, this._pageW || 1, this._pageH || 1);
+    try {
+      await this._createPipelines(device, canvasFormat);
+      this._createSamplers(device);
+      this._createUniformBuffer(device);
+      this._createdResourcesForSize(device, this._pageW || 1, this._pageH || 1);
+    } catch (err) {
+      this._report.available = false;
+      this._report.reason = 'initialization failed: ' + (err && (err.message || String(err)));
+      this._lost = true;
+      this._onStatus('WebGPU unavailable: ' + this._report.reason);
+      logger.error('gpu', 'initialization failed', wrap(err, { module: 'gpu', operation: 'init' }).toJSON());
+      return;
+    }
 
     this._initialized = true;
     this._lost = false;
@@ -221,7 +233,7 @@ export class WebGpuRenderer {
     logger.info('gpu', 'renderer initialised', { available: true });
   }
 
-  async _createPipelines(device) {
+  async _createPipelines(device, canvasFormat) {
     const shaders = await Promise.all([
       loadWgsl('paper'),
       loadWgsl('ink'),
@@ -277,7 +289,7 @@ export class WebGpuRenderer {
       fragment: {
         module: device.createShaderModule({ code: shaders[2] }),
         entryPoint: 'mainFs',
-        targets: [{ format: 'rgba8unorm' }],
+        targets: [{ format: canvasFormat }],
       },
       primitive: { topology: 'triangle-strip' },
       depthStencil: null,
@@ -308,7 +320,7 @@ export class WebGpuRenderer {
 
     this._paperTexture = device.createTexture({
       size: [w, h, 1],
-      format: 'rgba16float',
+      format: 'rgba32float',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
     });
     this._inkTexture = device.createTexture({
@@ -517,7 +529,7 @@ export class WebGpuRenderer {
 
     const exportPaper = device.createTexture({
       size: [w, h, 1],
-      format: 'rgba16float',
+      format: 'rgba32float',
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
     });
     const exportInk = device.createTexture({
