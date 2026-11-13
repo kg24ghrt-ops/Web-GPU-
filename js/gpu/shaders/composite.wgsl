@@ -3,6 +3,10 @@
 // ruling (blue-grey horizontal rules), the margin line (red-brown) and the
 // ink layer into the final page image.
 //
+// Paper texture is rgba32float storage (not filterable on many devices,
+// especially mobile), so all sampling uses textureLoad (exact texel fetch,
+// no filtering required) with integer coords clamped to the texture bounds.
+//
 // Uniform layout (shared, 24 x f32 = 96 bytes):
 //  0 pageWidthPx  1 pageHeightPx  2 lineSpacingPx  3 lineWidthPx
 //  4 lineOffsetPx 5 marginXPx  6 marginLineWidthPx
@@ -40,35 +44,31 @@ struct Uniforms {
 @group(0) @binding(3) var inkTex: texture_2d<f32>;
 @group(0) @binding(4) var inkSampler: sampler;
 
-@vertex
-fn mainVs(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4<f32> {
-  // Full-screen quad, triangle strip, Y-down to match page coords.
-  let x = f32(i32(vertexIndex) & 1) * 2.0 - 1.0;
-  let y = f32((i32(vertexIndex) >> 1) & 1) * 2.0 - 1.0;
-  return vec4<f32>(x, -y, 0.0, 1.0);
+fn dims() -> vec2<f32> {
+  return vec2<f32>(uniforms.pageWidthPx, uniforms.pageHeightPx);
+}
+
+fn texCoords(uv: vec2<f32>) -> vec2<i32> {
+  return vec2<i32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)) * dims());
 }
 
 fn sampleHeight(uv: vec2<f32>) -> f32 {
-  return textureSampleLevel(paperTex, paperSampler, uv, 0.0).a;
+  return textureLoad(paperTex, texCoords(uv), 0).a;
 }
 
 fn normalAndRoughnessFromHeight(uv: vec2<f32>) -> vec3<f32> {
-  // Returns: xy = normal perturbation magnitude hint, z = roughness.
-  const eps = 1.0;
   let tx = vec2<f32>(1.0 / uniforms.pageWidthPx, 0.0);
   let ty = vec2<f32>(0.0, 1.0 / uniforms.pageHeightPx);
   let h = sampleHeight(uv);
   let hx = sampleHeight(uv + tx) - sampleHeight(uv - tx);
   let hy = sampleHeight(uv + ty) - sampleHeight(uv - ty);
   let normal = normalize(vec3<f32>(-hx * 0.5, -hy * 0.5, 1.0));
-  // Roughness from local height variation: steeper slopes = rougher locally.
   let grad = sqrt(hx * hx + hy * hy) * 0.5;
   let roughness = clamp(grad, 0.0, 1.0);
   return vec3<f32>(normal.x, normal.y, roughness);
 }
 
 fn ambientOcclusion(uv: vec2<f32>) -> f32 {
-  // Simple ambient occlusion: sample height along a few directions.
   let h0 = sampleHeight(uv);
   var ao = 0.0;
   var weight = 1.0;
@@ -76,7 +76,7 @@ fn ambientOcclusion(uv: vec2<f32>) -> f32 {
   for (var i = 0; i < 4; i++) {
     let angle = f32(i) * 1.5708;
     let dir = vec2<f32>(cos(angle), sin(angle));
-    let p = uv + dir * step * 1.0 / vec2<f32>(uniforms.pageWidthPx, uniforms.pageHeightPx);
+    let p = uv + dir * step * 1.0 / dims();
     let hd = sampleHeight(p);
     if (hd < h0) {
       ao += (h0 - hd) * weight;
@@ -87,10 +87,18 @@ fn ambientOcclusion(uv: vec2<f32>) -> f32 {
   return clamp(ao * 0.5, 0.0, 1.0);
 }
 
+@vertex
+fn mainVs(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4<f32> {
+  // Full-screen quad, triangle strip, Y-down to match page coords.
+  let x = f32(i32(vertexIndex) & 1) * 2.0 - 1.0;
+  let y = f32((i32(vertexIndex) >> 1) & 1) * 2.0 - 1.0;
+  return vec4<f32>(x, -y, 0.0, 1.0);
+}
+
 @fragment
 fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
-  let uv = fragCoord.xy / vec2<f32>(uniforms.pageWidthPx, uniforms.pageHeightPx);
-  let paper = textureSample(paperTex, paperSampler, uv);
+  let uv = fragCoord.xy / dims();
+  let paper = textureLoad(paperTex, texCoords(uv), 0);
   let baseColour = paper.rgb;
 
   // ---- Lighting from the paper height field ----
