@@ -485,6 +485,8 @@ export class WebGpuRenderer {
 
   /**
    * Write current uniforms to the uniform buffer based on target size + ruling.
+   * A random seed is written each call so every render yields a slightly
+   * different fibre / stain / crease pattern (hyper-realism variation).
    */
   _writeUniforms(device, width, height, lineSpacingPx, lineWidthPx, lineOffsetPx, marginXPx, marginLineWidthPx) {
     const lineColor = DEFAULT_RULING.lineColor;
@@ -503,7 +505,7 @@ export class WebGpuRenderer {
     data[11] = marginLineColor[0]; data[12] = marginLineColor[1]; data[13] = marginLineColor[2]; data[14] = marginLineColor[3];
     data[15] = lightDir[0]; data[16] = lightDir[1]; data[17] = lightDir[2];
     data[18] = ambient;
-    data[19] = 0.12345; // seed
+    data[19] = Math.random(); // seed: random per render for variation
     data[20] = 0.0; // time
     device.queue.writeBuffer(this._uniformBuffer, 0, data);
   }

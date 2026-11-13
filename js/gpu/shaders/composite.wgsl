@@ -48,14 +48,43 @@ fn mainVs(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4<f3
   return vec4<f32>(x, -y, 0.0, 1.0);
 }
 
-fn normalFromHeight(uv: vec2<f32>) -> vec3<f32> {
+fn sampleHeight(uv: vec2<f32>) -> f32 {
+  return textureSampleLevel(paperTex, paperSampler, uv, 0.0).a;
+}
+
+fn normalAndRoughnessFromHeight(uv: vec2<f32>) -> vec3<f32> {
+  // Returns: xy = normal perturbation magnitude hint, z = roughness.
   const eps = 1.0;
   let tx = vec2<f32>(1.0 / uniforms.pageWidthPx, 0.0);
   let ty = vec2<f32>(0.0, 1.0 / uniforms.pageHeightPx);
-  let h = textureSample(paperTex, paperSampler, uv).a;
-  let hx = textureSample(paperTex, paperSampler, uv + tx).a - textureSample(paperTex, paperSampler, uv - tx).a;
-  let hy = textureSample(paperTex, paperSampler, uv + ty).a - textureSample(paperTex, paperSampler, uv - ty).a;
-  return normalize(vec3<f32>(-hx * 0.5, -hy * 0.5, 1.0));
+  let h = sampleHeight(uv);
+  let hx = sampleHeight(uv + tx) - sampleHeight(uv - tx);
+  let hy = sampleHeight(uv + ty) - sampleHeight(uv - ty);
+  let normal = normalize(vec3<f32>(-hx * 0.5, -hy * 0.5, 1.0));
+  // Roughness from local height variation: steeper slopes = rougher locally.
+  let grad = sqrt(hx * hx + hy * hy) * 0.5;
+  let roughness = clamp(grad, 0.0, 1.0);
+  return vec3<f32>(normal.x, normal.y, roughness);
+}
+
+fn ambientOcclusion(uv: vec2<f32>) -> f32 {
+  // Simple ambient occlusion: sample height along a few directions.
+  let h0 = sampleHeight(uv);
+  var ao = 0.0;
+  var weight = 1.0;
+  var step = 1.0;
+  for (var i = 0; i < 4; i++) {
+    let angle = f32(i) * 1.5708;
+    let dir = vec2<f32>(cos(angle), sin(angle));
+    let p = uv + dir * step * 1.0 / vec2<f32>(uniforms.pageWidthPx, uniforms.pageHeightPx);
+    let hd = sampleHeight(p);
+    if (hd < h0) {
+      ao += (h0 - hd) * weight;
+    }
+    weight *= 0.5;
+    step *= 2.0;
+  }
+  return clamp(ao * 0.5, 0.0, 1.0);
 }
 
 @fragment
@@ -64,15 +93,28 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
   let paper = textureSample(paperTex, paperSampler, uv);
   let baseColour = paper.rgb;
 
-  // Lighting from the paper height field (matte paper: diffuse dominant).
-  let normal = normalFromHeight(uv);
+  // ---- Lighting from the paper height field ----
+  let nr = normalAndRoughnessFromHeight(uv);
+  let normal = normalize(vec3<f32>(nr.x, nr.y, 1.0));
+  let roughness = nr.z;
   let lightDir = normalize(vec3<f32>(uniforms.lightDirX, uniforms.lightDirY, uniforms.lightDirZ));
+
+  // Diffuse (dominant for matte paper).
   let diffuse = max(dot(normal, lightDir), 0.0);
-  let lighting = uniforms.ambient + (1.0 - uniforms.ambient) * diffuse;
-  let softSpec = pow(max(dot(normal, vec3<f32>(0.0, 0.0, 1.0)), 0.0), 24.0) * 0.06;
+
+  // Roughness-modulated specular: rougher paper spreads the highlight.
+  let viewDir = vec3<f32>(0.0, 0.0, 1.0);
+  let halfDir = normalize(lightDir + viewDir);
+  let specDot = max(dot(normal, halfDir), 0.0);
+  let specPower = 32.0 + 64.0 * (1.0 - roughness);
+  let softSpec = pow(specDot, specPower) * 0.06 * (1.0 - roughness * 0.5);
+
+  // Ambient occlusion from height field: creases and fibres darken locally.
+  let ao = ambientOcclusion(uv);
+  let lighting = (uniforms.ambient + (1.0 - uniforms.ambient) * diffuse) * (1.0 - 0.4 * ao);
   let lit = baseColour * lighting + vec3<f32>(softSpec);
 
-  // Ruled lines: blue-grey horizontal rules starting at lineOffsetPx.
+  // ---- Ruled lines: blue-grey horizontal rules starting at lineOffsetPx ----
   let py = fragCoord.y;
   let spacing = uniforms.lineSpacingPx;
   let rel = (py - uniforms.lineOffsetPx) / spacing;
@@ -81,13 +123,13 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
   let lineHalf = uniforms.lineWidthPx * 0.5;
   let lineAlpha = 1.0 - smoothstep(lineHalf - 0.4, lineHalf + 0.4, lineDist);
 
-  // Margin line: vertical red-brown line at the left margin.
+  // ---- Margin line: vertical red-brown line at the left margin ----
   let mx = fragCoord.x;
   let marginDist = abs(mx - uniforms.marginXPx);
   let marginHalf = uniforms.marginLineWidthPx * 0.5;
   let marginAlpha = 1.0 - smoothstep(marginHalf - 0.4, marginHalf + 0.4, marginDist);
 
-  // Composite ruling over lit paper: tint paper toward line colour at rules.
+  // ---- Composite ruling over lit paper ----
   let ruleMix = min(lineAlpha + marginAlpha, 1.0);
   let lineColour = mix(
     vec3<f32>(uniforms.lineColorR, uniforms.lineColorG, uniforms.lineColorB),
@@ -100,10 +142,15 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
     ruleMix
   );
 
-  // Ink layer: premultiplied alpha over paper.
+  // ---- Ink layer: premultiplied alpha over paper ----
   let ink = textureSample(inkTex, inkSampler, uv);
   let outColour = paperWithRule * (1.0 - ink.a) + ink.rgb;
   let outAlpha = 1.0 - (1.0 - paper.a) * (1.0 - ink.a);
 
-  return vec4<f32>(outColour, outAlpha);
+  // ---- Edge vignette: subtle darkening toward page edges for realism ----
+  let d = distance(uv, vec2<f32>(0.5, 0.5));
+  let vignette = 1.0 - smoothstep(0.55, 0.85, d) * 0.06;
+  let outColourVignette = outColour * vignette;
+
+  return vec4<f32>(outColourVignette, outAlpha);
 }
