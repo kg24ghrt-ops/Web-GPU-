@@ -31,6 +31,9 @@ import { mmToPx, snapPx } from '../units.js';
  * @typedef {Object} EditorConfig
  * @property {number} writeWidthPx - Writing area width in CSS px
  * @property {number} writeHeightPx - Writing area height in CSS px
+ * @property {number} originXPx - Writing area origin X in CSS px (left margin)
+ * @property {number} originYPx - Writing area origin Y in CSS px (top margin / first rule)
+ * @property {number} baselineOffsetPx - Approximate font ascent so glyph baseline sits on the first rule
  * @property {number} lineHeightPx - Line height in CSS px (for overflow estimation)
  * @property {string} fontFamily - CSS font-family string
  * @property {number} fontSizePx - Font size in CSS px
@@ -52,7 +55,12 @@ export class TextEditor {
    */
   constructor(config, callbacks = {}) {
     this._el = null;
-    this._config = config;
+    this._config = {
+      originXPx: 0,
+      originYPx: 0,
+      baselineOffsetPx: 0,
+      ...config,
+    };
     this._callbacks = callbacks;
     this._onInputBound = this._onInput.bind(this);
     this._onFocusBound = this._onFocus.bind(this);
@@ -83,9 +91,12 @@ export class TextEditor {
 
     // Constrain text to the writing area. width is set explicitly so text
     // wraps at the right margin; height auto-grows so we can measure overflow.
+    // Positioned at the writing area origin (inside margins). top is shifted
+    // up by baselineOffsetPx so the glyph baseline (not the line-box top)
+    // lands on the first ruling line.
     this._el.style.position = 'absolute';
-    this._el.style.top = '0';
-    this._el.style.left = '0';
+    this._el.style.top = snapPx(this._config.originYPx - this._config.baselineOffsetPx) + 'px';
+    this._el.style.left = snapPx(this._config.originXPx) + 'px';
     this._el.style.width = snapPx(this._config.writeWidthPx) + 'px';
     this._el.style.minHeight = snapPx(this._config.writeHeightPx) + 'px';
     this._el.style.maxHeight = snapPx(this._config.writeHeightPx) + 'px';
@@ -99,8 +110,8 @@ export class TextEditor {
     this._el.style.whiteSpace = 'pre-wrap';
     this._el.style.wordWrap = 'break-word';
     this._el.style.overflowWrap = 'anywhere';
-    this._el.style.color = '#111827';
-    this._el.style.caretColor = '#111827';
+    this._el.style.color = '#1a3a5c';
+    this._el.style.caretColor = '#1a3a5c';
     this._el.style.outline = 'none';
 
     // Disabled by default — enabled when text mode is active.
@@ -232,9 +243,6 @@ export class TextEditor {
   _onInput() {
     if (this._callbacks.onInput) {
       this._callbacks.onInput(this._el.textContent);
-    }
-    if (this._callbacks.onOverflow && this.isOverflowing()) {
-      this._callbacks.onOverflow();
     }
   }
 

@@ -7,7 +7,7 @@ import { Notebook } from './notebook/notebook.js';
 import { mmToPx } from './units.js';
 import { getTemplate, listTemplates } from './paper/templates.js';
 import { getPaperSize } from './paper/sizes.js';
-import { ensureFonts, FONT_FAMILY, FONT_SIZE, LINE_HEIGHT } from './typography/typography.js';
+import { ensureFonts, FONT_FAMILY, FONT_SIZE } from './typography/typography.js';
 import { TextEditor } from './editor/text-editor.js';
 import { Stroke } from './handwriting/handwriting.js';
 import { WebGpuRenderer, PEN_MATERIALS } from './gpu/renderer.js';
@@ -154,23 +154,23 @@ async function renderPage(page) {
   await renderer.render();
 
   const area = writingAreaRect(t, size, pageW, pageH);
-  const lineHeightPx = mmToPx(t.lineSpacingMm > 0 ? t.lineSpacingMm : 7.1) * LINE_HEIGHT;
+  const lineHeightPx = mmToPx(t.lineSpacingMm > 0 ? t.lineSpacingMm : 7.1);
 
   textEditor = new TextEditor(
     {
       writeWidthPx: area.w,
       writeHeightPx: area.h,
+      originXPx: area.x,
+      originYPx: area.y,
+      baselineOffsetPx: parseFloat(FONT_SIZE) * 0.75,
       lineHeightPx,
       fontFamily: FONT_FAMILY,
-      fontSizePx: mmToPx(parseFloat(FONT_SIZE)),
+      fontSizePx: parseFloat(FONT_SIZE),
     },
     {
       onInput: (text) => {
         notebook.setText(page.id, text);
         saveDebounced();
-        if (textEditor.isOverflowing()) {
-          handleOverflow();
-        }
       },
       onOverflow: handleOverflow,
     }
@@ -188,6 +188,21 @@ function handleOverflow() {
   const page = notebook.currentPage();
   if (!page) return;
   const next = notebook.createPage({ paperType: page.paperType || settings.get('paper.type') });
+
+  // Move text that does not fit on the current page to the new page.
+  const text = textEditor.text();
+  const maxLines = textEditor ? textEditor.maxLines() : 0;
+  if (maxLines > 0) {
+    const lines = text.split('\n');
+    if (lines.length > maxLines) {
+      const keepLines = lines.slice(0, maxLines);
+      const moveLines = lines.slice(maxLines);
+      notebook.setText(page.id, keepLines.join('\n'));
+      notebook.setText(next.id, moveLines.join('\n'));
+      saveDebounced();
+    }
+  }
+
   renderPageList();
   renderPage(next).then(() => {
     setStatus('New page created (page full)');

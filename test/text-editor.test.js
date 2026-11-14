@@ -104,3 +104,43 @@ test('text-editor: destroy removes from DOM', (t) => {
   editor.destroy();
   assert.strictEqual(container.children.length, 0);
 });
+
+test('text-editor: positioned at writing area origin with baseline offset', (t) => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const editor = new TextEditor(
+    {
+      writeWidthPx: 400,
+      writeHeightPx: 500,
+      originXPx: 94,
+      originYPx: 94,
+      baselineOffsetPx: 13,
+      lineHeightPx: 30,
+      fontFamily: 'Arial',
+      fontSizePx: 18,
+    },
+    {}
+  );
+  editor.mount(container, 'page-1');
+  // Left inside margin, top shifted up by baseline offset so baseline sits on first rule.
+  assert.strictEqual(editor._el.style.left, '94px');
+  assert.strictEqual(editor._el.style.top, '81px'); // 94 - 13
+  assert.strictEqual(editor._el.style.width, '400px');
+  // Width equals write width, not running into margin.
+  assert.strictEqual(editor._el.style.maxHeight, '500px');
+  editor.destroy();
+});
+
+test('text-editor: line height equals one ruling interval', (t) => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  // 8 mm spacing = about 30 px, lineHeightPx should equal that (not multiplied by LINE_HEIGHT).
+  const editor = new TextEditor(
+    { writeWidthPx: 400, writeHeightPx: 300, lineHeightPx: 30, fontFamily: 'Arial', fontSizePx: 18 },
+    {}
+  );
+  editor.mount(container, 'page-1');
+  assert.strictEqual(editor._el.style.lineHeight, '30px');
+  assert.strictEqual(editor.maxLines(), 10); // 300 / 30
+  editor.destroy();
+});
