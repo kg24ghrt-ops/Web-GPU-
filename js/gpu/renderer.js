@@ -409,7 +409,7 @@ export class WebGpuRenderer {
     // lighting and seed data on every display frame (not just PNG export).
     this._writeUniforms(device, w, h,
       this._template ? mmToPx(this._template.lineSpacingMm) : 8 * 3.7795,
-      this._template ? mmToPx(this._template.lineWidthMm) : 0.5 * 3.7795,
+      this._template ? mmToPx(DEFAULT_RULING.lineWidthMm) : 0.5 * 3.7795,
       this._template ? mmToPx(this._template.topMarginMm) : 25 * 3.7795,
       this._template ? mmToPx(this._template.marginMm) : 25 * 3.7795,
       this._template ? mmToPx(1.2) : 1.2 * 3.7795
@@ -625,7 +625,7 @@ export class WebGpuRenderer {
     // Composite paper + ink -> exportOutput.
     this._writeUniforms(device, w, h,
       this._template ? mmToPx(this._template.lineSpacingMm) * sy : 8 * 3.7795 * sy,
-      this._template ? mmToPx(this._template.lineWidthMm) * sy : 0.5 * 3.7795 * sy,
+      this._template ? mmToPx(DEFAULT_RULING.lineWidthMm) * sy : 0.5 * 3.7795 * sy,
       this._template ? mmToPx(this._template.topMarginMm) * sy : 25 * 3.7795 * sy,
       this._template ? mmToPx(this._template.marginMm) * sx : 25 * 3.7795 * sx,
       this._template ? mmToPx(1.2) * sy : 1.2 * 3.7795 * sy

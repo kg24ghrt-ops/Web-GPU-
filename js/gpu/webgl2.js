@@ -83,40 +83,38 @@ void main() {
   vec2 uv = gl_FragCoord.xy / u_resolution;
   float s = u_seed;
 
-  // Base colour: off-white with nonuniform distribution.
-  float base = fbm2(uv * 3.0 + s, 4);
-  float colourShift = fbm2(uv * 7.0 + s + 100.0, 3);
-  float ageShift = fbm2(uv * 1.5 + s + 4000.0, 3);
-  vec3 paperColour = vec3(
-    0.965 + 0.018 * base + 0.006 * colourShift + 0.004 * ageShift,
-    0.958 + 0.014 * base + 0.005 * colourShift + 0.003 * ageShift,
-    0.930 + 0.012 * base + 0.004 * colourShift + 0.002 * ageShift);
+  // Base colour: warm off-white (cream), no blue cast.
+  vec3 paperColour = vec3(0.985, 0.978, 0.955);
 
-  // Multi-scale fibres.
-  vec2 fibreDir = vec2(0.92, 0.39);
-  float fibreDensity = 0.55 + 0.25 * fbm2(uv * 2.0 + s + 200.0, 3);
-  float fine = fibreFbm(uv * 40.0, fibreDir, 3);
-  float broad = fibreFbm(uv * 10.0, fibreDir, 4);
-  float fibreMask = smoothstep(0.52, 0.70, 0.5 * fine + 0.35 * broad) * fibreDensity;
+  // Large-scale faint mottling (< 2% brightness change).
+  float mottle = 0.015 * fbm2(uv * 0.8 + s + 7000.0, 3);
 
-  // Paper tooth + staining.
-  float tooth = fbm2(uv * 120.0 + s + 300.0, 2);
-  float stain = fbm2(uv * 0.8 + s + 5000.0, 4);
-  float stainMask = smoothstep(0.45, 0.65, stain);
+  // Fibres: fine, short, randomly oriented fibres at low contrast.
+  // A few orientations so it looks like fibre flecks, not streaks.
+  vec2 fibreDirA = vec2(1.0, 0.4);
+  vec2 fibreDirB = vec2(-0.4, 1.0);
+  vec2 fibreDirC = vec2(1.0, -0.4);
+  float fibreA = fibreFbm(uv * 60.0, fibreDirA, 2);
+  float fibreB = fibreFbm(uv * 60.0, fibreDirB, 2);
+  float fibreC = fibreFbm(uv * 60.0, fibreDirC, 2);
+  float fibreMask = smoothstep(0.62, 0.78, (fibreA + fibreB + fibreC) / 3.0) * 0.25;
+
+  // Paper tooth: fine bump texture for surface grain.
+  float tooth = fbm2(uv * 150.0 + s + 3000.0, 2);
 
   // Surface height field.
   float crease = ridged2(uv * 2.0 + s + 6000.0, 4);
-  float fibreHeight = 0.085 * fbm2(uv * 6.0 + s + 400.0, 5)
+  float fibreHeight = 0.09 * fbm2(uv * 6.0 + s + 400.0, 5)
                    + 0.03 * fbm2(uv * 30.0 + s + 500.0, 3);
   float toothHeight = 0.012 * tooth;
   float height = 0.03 * crease + fibreHeight - 0.02 * fibreMask + toothHeight;
 
-  // Output colour.
+  // Output colour: warm cream with fibre flecks, subtle grain and mottling.
   float grain = fbm2(uv * 90.0 + s + 300.0, 2);
   vec3 outColour = paperColour * vec3(
-    1.0 - 0.06 * fibreMask + 0.02 * grain - 0.02 * stainMask,
-    1.0 - 0.04 * fibreMask + 0.02 * grain - 0.015 * stainMask,
-    1.0 - 0.03 * fibreMask + 0.015 * grain - 0.01 * stainMask);
+    1.0 - 0.04 * fibreMask + 0.02 * grain + mottle,
+    1.0 - 0.03 * fibreMask + 0.015 * grain + mottle,
+    1.0 - 0.02 * fibreMask + 0.01 * grain + mottle);
 
   fragColor = vec4(outColour, clamp(0.5 + height * 4.0, 0.0, 1.0));
 }`;
@@ -572,7 +570,7 @@ export class WebGL2Renderer {
 
     // Write composite uniforms now that the composite program is bound.
     const lineSpacingPx = this._template ? MM_TO_PX * this._template.lineSpacingMm : 8 * 3.7795;
-    const lineWidthPx = this._template ? MM_TO_PX * this._template.lineWidthMm : 0.5 * 3.7795;
+    const lineWidthPx = this._template ? MM_TO_PX * DEFAULT_RULING.lineWidthMm : 0.5 * 3.7795;
     const lineOffsetPx = this._template ? MM_TO_PX * this._template.topMarginMm : 25 * 3.7795;
     const marginXPx = this._template ? MM_TO_PX * this._template.marginMm : 25 * 3.7795;
     const marginLineWidthPx = this._template ? MM_TO_PX * 1.2 : 1.2 * 3.7795;
@@ -605,7 +603,7 @@ export class WebGL2Renderer {
     const eif = createFbo(gl, w, h);
 
     const lineSpacingPx = this._template ? MM_TO_PX * this._template.lineSpacingMm * sy : 8 * 3.7795 * sy;
-    const lineWidthPx = this._template ? MM_TO_PX * this._template.lineWidthMm * sy : 0.5 * 3.7795 * sy;
+    const lineWidthPx = this._template ? MM_TO_PX * DEFAULT_RULING.lineWidthMm * sy : 0.5 * 3.7795 * sy;
     const lineOffsetPx = this._template ? MM_TO_PX * this._template.topMarginMm * sy : 25 * 3.7795 * sy;
     const marginXPx = this._template ? MM_TO_PX * this._template.marginMm * sx : 25 * 3.7795 * sx;
     const marginLineWidthPx = this._template ? MM_TO_PX * 1.2 * sy : 1.2 * 3.7795 * sy;

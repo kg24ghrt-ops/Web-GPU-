@@ -105,30 +105,24 @@ fn mainCs(@builtin(global_invocation_id) id: vec3<u32>) {
   let uv = vec2<f32>(x, y) / vec2<f32>(w, h);
   let s = uniforms.seed;
 
-  // ---- Base colour: off-white with nonuniform distribution ----
-  let base = fbm2(uv * 3.0 + s, 4);
-  let colourShift = fbm2(uv * 7.0 + s + 100.0, 3);
-  // Subtle yellowing / ageing variation across the sheet.
-  let ageShift = fbm2(uv * 1.5 + s + 4000.0, 3);
-  let paperColour = vec3<f32>(
-    0.965 + 0.018 * base + 0.006 * colourShift + 0.004 * ageShift,
-    0.958 + 0.014 * base + 0.005 * colourShift + 0.003 * ageShift,
-    0.930 + 0.012 * base + 0.004 * colourShift + 0.002 * ageShift
-  );
+  // ---- Base colour: warm off-white (cream), no blue cast ----
+  let paperColour = vec3<f32>(0.985, 0.978, 0.955);
 
-  // ---- Multi-scale fibres: fine + broad, orientation/density variation ----
-  const fibreDir = vec2<f32>(0.92, 0.39);
-  let fibreDensity = 0.55 + 0.25 * fbm2(uv * 2.0 + s + 200.0, 3);
-  let fine = fibreFbm(uv * 40.0, fibreDir, 3);
-  let broad = fibreFbm(uv * 10.0, fibreDir, 4);
-  let fibreMask = smoothstep(0.52, 0.70, 0.5 * fine + 0.35 * broad) * fibreDensity;
+  // ---- Large-scale faint mottling (< 2% brightness change) ----
+  let mottle = 0.015 * fbm2(uv * 0.8 + s + 7000.0, 3);
 
-  // ---- Paper tooth: fine bump texture for surface realism ----
-  let tooth = fbm2(uv * 120.0 + s + 300.0, 2);
+  // ---- Fibres: fine, short, randomly oriented fibres at low contrast ----
+  // A few orientations so it looks like fibre flecks, not streaks.
+  const fibreDirA = vec2<f32>(1.0, 0.4);
+  const fibreDirB = vec2<f32>(-0.4, 1.0);
+  const fibreDirC = vec2<f32>(1.0, -0.4);
+  let fibreA = fibreFbm(uv * 60.0, fibreDirA, 2);
+  let fibreB = fibreFbm(uv * 60.0, fibreDirB, 2);
+  let fibreC = fibreFbm(uv * 60.0, fibreDirC, 2);
+  let fibreMask = smoothstep(0.62, 0.78, (fibreA + fibreB + fibreC) / 3.0) * 0.25;
 
-  // ---- Subtle staining / toner variation (low-frequency discoloration) ----
-  let stain = fbm2(uv * 0.8 + s + 5000.0, 4);
-  let stainMask = smoothstep(0.45, 0.65, stain);
+  // ---- Paper tooth: fine bump texture for surface grain ----
+  let tooth = fbm2(uv * 150.0 + s + 3000.0, 2);
 
   // ---- Surface height field for lighting ----
   // Large-scale crease / fold structure (ridged multifractal).
@@ -140,12 +134,12 @@ fn mainCs(@builtin(global_invocation_id) id: vec3<u32>) {
   let toothHeight = 0.012 * tooth;
   let height = 0.03 * crease + fibreHeight - 0.02 * fibreMask + toothHeight;
 
-  // ---- Output colour with fibre masking, grain and staining ----
+  // ---- Output colour: warm cream with fibre flecks, subtle grain and mottling ----
   let grain = fbm2(uv * 90.0 + s + 300.0, 2);
   let outColour = paperColour * vec3<f32>(
-    1.0 - 0.06 * fibreMask + 0.02 * grain - 0.02 * stainMask,
-    1.0 - 0.04 * fibreMask + 0.02 * grain - 0.015 * stainMask,
-    1.0 - 0.03 * fibreMask + 0.015 * grain - 0.01 * stainMask
+    1.0 - 0.04 * fibreMask + 0.02 * grain + mottle,
+    1.0 - 0.03 * fibreMask + 0.015 * grain + mottle,
+    1.0 - 0.02 * fibreMask + 0.01 * grain + mottle
   );
 
   textureStore(paperTex, id.xy, vec4<f32>(outColour, clamp(0.5 + height * 4.0, 0.0, 1.0)));
