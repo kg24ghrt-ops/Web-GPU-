@@ -19,6 +19,7 @@
 import { logger } from '../common/logger.js';
 import { wrap } from '../common/errors.js';
 import { buildStrokeGeometry, PEN_MATERIALS, DEFAULT_RULING } from './renderer.js';
+import { encodePng } from './png.js';
 
 const MM_TO_PX = 96 / 25.4;
 
@@ -682,7 +683,7 @@ export class WebGL2Renderer {
       flipped.set(pixels.subarray((h - 1 - y) * rowBytes, (h - 1 - y) * rowBytes + rowBytes), y * rowBytes);
     }
 
-    return encodePng(flipped, w, h);
+    return await encodePng(flipped, w, h);
   }
 
   resize() { this._dirty = true; }
@@ -705,71 +706,4 @@ export class WebGL2Renderer {
     this._initialized = false;
     this._available = false;
   }
-}
-
-/**
- * Dependency-free PNG encoder (CompressionStream, deflate-raw, stored fallback).
- * Mirrored from js/gpu/png.js so WebGL2 export is self-contained.
- */
-function encodePng(pixels, w, h) {
-  const CRC_TABLE = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-    CRC_TABLE[n] = c >>> 0;
-  }
-  function crc32(buf) {
-    let c = 0xFFFFFFFF;
-    for (let i = 0; i < buf.length; i++) c = (c >>> 8) ^ CRC_TABLE[(c ^ buf[i]) & 0xFF];
-    return (c ^ 0xFFFFFFFF) >>> 0;
-  }
-  function u32(v) { return [(v >>> 24) & 0xFF, (v >>> 16) & 0xFF, (v >>> 8) & 0xFF, v & 0xFF]; }
-  function chunk(type, data) {
-    const len = u32(data.length);
-    const crcInput = new Uint8Array([...type.split('').map((c) => c.charCodeAt(0)), ...data]);
-    const crc = u32(crc32(crcInput));
-    return [...len, ...crcInput, ...crc];
-  }
-  // Build raw deflate blocks (uncompressed stored blocks) to avoid zlib dependency.
-  // Split into 65535-byte stored blocks.
-  const rows = [];
-  for (let y = 0; y < h; y++) {
-    rows.push(0); // filter none
-    for (let x = 0; x < w * 4; x++) rows.push(pixels[y * w * 4 + x]);
-  }
-  const raw = new Uint8Array(rows);
-  const stored = [];
-  let i = 0;
-  while (i < raw.length) {
-    const block = raw.subarray(i, Math.min(i + 65535, raw.length));
-    const finalBlock = i + block.length >= raw.length ? 1 : 0;
-    // BFINAL(1) + BTYPE=00(0) stored block => 3 bits -> align to byte.
-    stored.push(finalBlock | 0x00); // byte 0: BFINAL + BTYPE 00
-    const len = block.length;
-    const nlen = (~len) & 0xFFFF;
-    stored.push(len & 0xFF, (len >>> 8) & 0xFF, nlen & 0xFF, (nlen >>> 8) & 0xFF);
-    stored.push(...Array.from(block));
-    i += block.length;
-  }
-  const adler = adler32(raw);
-  const idat = new Uint8Array(stored);
-  const adlerBytes = u32(adler);
-
-  const ihdr = u32(13).concat([73, 72, 68, 82], u32(w), u32(h), [8, 6, 0, 0, 0]);
-  const ihdrChunk = chunk('IHDR', ihdr);
-  const idatChunk = chunk('IDAT', Array.from(idat));
-  const iendChunk = chunk('IEND', []);
-  const signature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-  const all = new Uint8Array([...signature, ...ihdrChunk, ...idatChunk, adlerBytes[0], adlerBytes[1], adlerBytes[2], adlerBytes[3], ...iendChunk]);
-  return all;
-}
-
-function adler32(buf) {
-  let a = 1, b = 0;
-  const MOD = 65521;
-  for (let i = 0; i < buf.length; i++) {
-    a = (a + buf[i]) % MOD;
-    b = (b + a) % MOD;
-  }
-  return (b << 16) | a;
 }

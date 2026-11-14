@@ -9,6 +9,17 @@
 /** PNG signature. */
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+/** Adler-32 checksum of a byte buffer. */
+function adler32(buf) {
+  let a = 1, b = 0;
+  const MOD = 65521;
+  for (let i = 0; i < buf.length; i++) {
+    a = (a + buf[i]) % MOD;
+    b = (b + a) % MOD;
+  }
+  return (b << 16) | a;
+}
+
 /** CRC32 table (lazy built). */
 let crcTable = null;
 function crc32Table() {
@@ -116,10 +127,16 @@ export async function encodePng(pixels, width, height) {
  * Deflate-compress bytes using CompressionStream when available, falling
  * back to a stored (uncompressed) deflate block when not.
  */
+/**
+ * Deflate-compress bytes into a zlib stream using CompressionStream when
+ * available, falling back to stored (uncompressed) deflate blocks otherwise.
+ * Output is a valid zlib stream: 2-byte header, compressed/stored blocks,
+ * then Adler-32 of the uncompressed input (big-endian).
+ */
 async function compressDeflate(input) {
   if (typeof CompressionStream !== 'undefined') {
     try {
-      const stream = new CompressionStream('deflate-raw');
+      const stream = new CompressionStream('deflate');
       const writer = stream.writable.getWriter();
       writer.write(input);
       writer.close();
@@ -141,32 +158,38 @@ async function compressDeflate(input) {
       // fall through to stored fallback
     }
   }
-  // Stored (uncompressed) deflate blocks: BFINAL=1, BTYPE=00, then LEN/NLEN + data.
-  // Split into 65535-byte blocks.
+  // Stored (uncompressed) deflate blocks wrapped in a zlib stream.
+  // Zlib header (0x78 0x01), then stored blocks, then Adler-32 trailer.
+  const zlibHeader = new Uint8Array([0x78, 0x01]);
   const blocks = [];
   let pos = 0;
   const len = input.length;
   while (pos < len) {
     const blockLen = Math.min(65535, len - pos);
     const finalBlock = pos + blockLen >= len;
-    const header = new Uint8Array(finalBlock ? 1 : 0);
-    if (finalBlock) header[0] = 0x01;
-    const chunk = new Uint8Array(header.length + blockLen + (finalBlock ? 0 : 4));
-    chunk.set(header, 0);
-    let c = header.length;
-    if (!finalBlock) {
-      // LEN and NLEN (ones complement)
-      chunk.set([blockLen & 0xff, blockLen >>> 8, (~blockLen) & 0xff, (~blockLen) >>> 8], c);
-      c += 4;
-    }
-    chunk.set(input.subarray(pos, pos + blockLen), c);
+    // Every block: 1-byte header (BFINAL in bit 0, BTYPE=00) + LEN + NLEN + data.
+    const headerByte = finalBlock ? 0x01 : 0x00;
+    const chunk = new Uint8Array(1 + 4 + blockLen);
+    chunk[0] = headerByte;
+    chunk[1] = blockLen & 0xff;
+    chunk[2] = (blockLen >>> 8) & 0xff;
+    chunk[3] = (~blockLen) & 0xff;
+    chunk[4] = (~blockLen >>> 8) & 0xff;
+    chunk.set(input.subarray(pos, pos + blockLen), 5);
     blocks.push(chunk);
     pos += blockLen;
   }
-  let total = 0;
+  let total = zlibHeader.length;
   for (const b of blocks) total += b.length;
+  const adler = adler32(input);
+  total += 4; // adler-32 trailer
   const out = new Uint8Array(total);
   let o = 0;
+  out.set(zlibHeader, o); o += zlibHeader.length;
   for (const b of blocks) { out.set(b, o); o += b.length; }
+  out[o++] = (adler >>> 24) & 0xff;
+  out[o++] = (adler >>> 16) & 0xff;
+  out[o++] = (adler >>> 8) & 0xff;
+  out[o++] = adler & 0xff;
   return out;
 }

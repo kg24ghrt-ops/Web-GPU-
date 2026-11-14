@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { encodePng } from '../../js/gpu/png.js';
+import zlib from 'node:zlib';
 
 const SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -59,6 +60,36 @@ test('png: encodes a solid colour with valid structure', async () => {
   assert.equal(readU32(ihdr, 4), h);
   assert.equal(ihdr[8], 8);  // bit depth
   assert.equal(ihdr[9], 6);  // RGBA
+});
+
+test('png: IDAT decompresses with zlib to the original scanlines', async () => {
+  const w = 4, h = 3;
+  const pixels = new Uint8Array(w * h * 4);
+  for (let i = 0; i < pixels.length; i += 4) {
+    pixels[i] = 100; pixels[i + 1] = 150; pixels[i + 2] = 200; pixels[i + 3] = 255;
+  }
+  const png = await encodePng(pixels, w, h);
+  const chunks = parsePng(png);
+  const idat = chunks.filter((c) => c.type === 'IDAT').map((c) => c.data);
+  assert.ok(idat.length > 0, 'has compressed data');
+  const idatBytes = new Uint8Array(idat.reduce((s, b) => s + b.length, 0));
+  let o = 0;
+  for (const b of idat) { idatBytes.set(b, o); o += b.length; }
+  const raw = zlib.inflateSync(idatBytes);
+  assert.equal(raw.length, h * (1 + w * 4), 'decoded length matches scanlines');
+  // First byte of each scanline is filter type 0.
+  for (let y = 0; y < h; y++) {
+    assert.equal(raw[y * (1 + w * 4)], 0, 'filter type 0 on scanline ' + y);
+  }
+  // Pixel data follows each filter byte.
+  const rowBytes = w * 4;
+  for (let y = 0; y < h; y++) {
+    const src = y * rowBytes;
+    const dst = y * (1 + rowBytes) + 1;
+    for (let i = 0; i < rowBytes; i++) {
+      assert.equal(raw[dst + i], pixels[src + i], 'pixel matches at row ' + y + ' byte ' + i);
+    }
+  }
 });
 
 test('png: round-trips varying pixel data with correct dimensions', async () => {

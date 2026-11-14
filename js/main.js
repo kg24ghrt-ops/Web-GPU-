@@ -332,11 +332,33 @@ async function exportPng() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    setStatus('Exported ' + exportW + 'x' + exportH);
+    setStatus('Exported ' + exportW + 'x' + exportH + ' (PNG)');
   } catch (err) {
     const e = wrap(err, { module: 'gpu', operation: 'exportPng', retryable: true });
     logger.error('gpu', 'exportPng', e.toJSON());
-    setStatus('Export failed: ' + (e.cause || e.message), { error: true });
+    // Fallback: draw the page canvas to a standard JPEG via canvas toBlob.
+    try {
+      const blob = await new Promise((resolve, reject) => {
+        try {
+          gpuCanvas.toBlob(resolve, 'image/jpeg', 0.95);
+        } catch (err) {
+          reject(err);
+        }
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'school-notebook-page.jpg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setStatus('Exported (JPEG fallback)');
+    } catch (fallbackErr) {
+      const fe = wrap(fallbackErr, { module: 'gpu', operation: 'exportPngFallback', retryable: true });
+      logger.error('gpu', 'exportPngFallback', fe.toJSON());
+      setStatus('Export failed: ' + (fe.cause || fe.message), { error: true });
+    }
   } finally {
     exportInFlight = false;
     btnExport.disabled = false;
