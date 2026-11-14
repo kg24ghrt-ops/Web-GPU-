@@ -19,7 +19,6 @@
 import { logger } from '../common/logger.js';
 import { wrap } from '../common/errors.js';
 import { buildStrokeGeometry, PEN_MATERIALS, DEFAULT_RULING } from './renderer.js';
-import { encodePng } from './png.js';
 
 const MM_TO_PX = 96 / 25.4;
 
@@ -594,96 +593,122 @@ export class WebGL2Renderer {
       throw new Error('gpu: renderer not available for export');
     }
     const gl = this._gl;
-    const sx = exportW / this._pageW;
-    const sy = exportH / this._pageH;
-    const w = Math.max(1, Math.floor(exportW));
-    const h = Math.max(1, Math.floor(exportH));
 
-    // Offscreen FBOs at export size.
-    const epf = createFbo(gl, w, h);
-    const eif = createFbo(gl, w, h);
+    // Clamp to device limits.
+    const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    const scale = Math.min(1, maxTex / exportW, maxTex / exportH);
+    let clampedW = exportW;
+    let clampedH = exportH;
+    if (scale < 1) {
+      clampedW = Math.floor(exportW * scale);
+      clampedH = Math.floor(exportH * scale);
+      this._onStatus('Export clamped to ' + clampedW + 'x' + clampedH);
+    }
 
-    const lineSpacingPx = this._template ? MM_TO_PX * this._template.lineSpacingMm * sy : 8 * 3.7795 * sy;
-    const lineWidthPx = this._template ? MM_TO_PX * DEFAULT_RULING.lineWidthMm * sy : 0.5 * 3.7795 * sy;
-    const lineOffsetPx = this._template ? MM_TO_PX * this._template.topMarginMm * sy : 25 * 3.7795 * sy;
-    const marginXPx = this._template ? MM_TO_PX * this._template.marginMm * sx : 25 * 3.7795 * sx;
-    const marginLineWidthPx = this._template ? MM_TO_PX * 1.2 * sy : 1.2 * 3.7795 * sy;
+    const w = Math.max(1, Math.floor(clampedW));
+    const h = Math.max(1, Math.floor(clampedH));
 
-    // Paper at export size.
-    gl.bindFramebuffer(gl.FRAMEBUFFER, epf.fbo);
-    gl.viewport(0, 0, w, h);
-    gl.useProgram(this._paperProg);
-    gl.uniform2f(this._paperLocs.resolution, w, h);
-    gl.uniform1f(this._paperLocs.seed, Math.random());
-    gl.bindVertexArray(this._quadVao);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    // Save canvas and page dimensions.
+    const savedCanvasW = this._canvas.width;
+    const savedCanvasH = this._canvas.height;
+    const savedPageW = this._pageW;
+    const savedPageH = this._pageH;
 
-    // Ink at export size (scaled strokes).
-    const savedStrokes = this._strokes;
-    const savedCount = this._strokeVertexCount;
+    let blob = null;
     try {
-      const scaled = this._strokes.map(s => ({
-        ...s,
-        points: s.points.map(p => ({ x: p.x * sx, y: p.y * sy, t: p.t })),
-        width: s.width * Math.sqrt(sx * sy),
-      }));
-      this._strokes = scaled;
-      this._dirty = true;
-      if (this._dirty) this._uploadStrokes(gl);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, eif.fbo);
+      // Resize canvas to export size.
+      this._canvas.width = w;
+      this._canvas.height = h;
+
+      // Temporarily adopt export size for rendering.
+      this._pageW = w;
+      this._pageH = h;
+
+      // Recreate resources at export size.
+      this._createdResourcesForSize(gl, w, h);
+
+      // Scale uniforms for export resolution.
+      const sx = w / savedPageW;
+      const sy = h / savedPageH;
+      const lineSpacingPx = this._template ? MM_TO_PX * this._template.lineSpacingMm * sy : 8 * 3.7795 * sy;
+      const lineWidthPx = this._template ? MM_TO_PX * DEFAULT_RULING.lineWidthMm * sy : 0.5 * 3.7795 * sy;
+      const lineOffsetPx = this._template ? MM_TO_PX * this._template.topMarginMm * sy : 25 * 3.7795 * sy;
+      const marginXPx = this._template ? MM_TO_PX * this._template.marginMm * sx : 25 * 3.7795 * sx;
+      const marginLineWidthPx = this._template ? MM_TO_PX * 1.2 * sy : 1.2 * 3.7795 * sy;
+
+      // 1. Paper pass -> paper FBO at export size.
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._paperFbo);
       gl.viewport(0, 0, w, h);
-      gl.clearColor(0, 0, 0, 0);
+      gl.useProgram(this._paperProg);
+      gl.uniform2f(this._paperLocs.resolution, w, h);
+      gl.uniform1f(this._paperLocs.seed, Math.random());
+      gl.bindVertexArray(this._quadVao);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      // 2. Ink pass -> ink FBO at export size (scaled strokes).
+      const savedStrokes = this._strokes;
+      const savedCount = this._strokeVertexCount;
+      try {
+        const scaled = this._strokes.map(s => ({
+          ...s,
+          points: s.points.map(p => ({ x: p.x * sx, y: p.y * sy, t: p.t })),
+          width: s.width * Math.sqrt(sx * sy),
+        }));
+        this._strokes = scaled;
+        this._dirty = true;
+        if (this._dirty) this._uploadStrokes();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this._inkFbo);
+        gl.viewport(0, 0, w, h);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.useProgram(this._inkProg);
+        gl.uniform2f(this._inkLocs.resolution, w, h);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.bindVertexArray(this._strokeVao);
+        gl.drawArrays(gl.TRIANGLES, 0, this._strokeVertexCount);
+        gl.disable(gl.BLEND);
+      } finally {
+        this._strokes = savedStrokes;
+        this._strokeVertexCount = savedCount;
+      }
+
+      // 3. Composite -> canvas at export size.
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, w, h);
+      gl.clearColor(0, 0, 0, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.useProgram(this._inkProg);
-      gl.uniform2f(this._inkLocs.resolution, w, h);
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      gl.bindVertexArray(this._strokeVao);
-      gl.drawArrays(gl.TRIANGLES, 0, this._strokeVertexCount);
-      gl.disable(gl.BLEND);
+      gl.useProgram(this._compositeProg);
+      this._writeUniforms(gl, w, h, lineSpacingPx, lineWidthPx, lineOffsetPx, marginXPx, marginLineWidthPx);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this._paperTex);
+      gl.uniform1i(this._compositeLocs.paperTex, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this._inkTex);
+      gl.uniform1i(this._compositeLocs.inkTex, 1);
+      gl.bindVertexArray(this._quadVao);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      // Capture the frame while it is still on the canvas.
+      blob = await new Promise((resolve) => {
+        this._canvas.toBlob(resolve, 'image/png');
+      });
+      if (!blob) {
+        blob = await new Promise((resolve) => {
+          this._canvas.toBlob(resolve, 'image/jpeg', 0.95);
+        });
+      }
     } finally {
-      this._strokes = savedStrokes;
-      this._strokeVertexCount = savedCount;
+      // Restore on-screen canvas size and re-render.
+      this._pageW = savedPageW;
+      this._pageH = savedPageH;
+      this._canvas.width = savedCanvasW;
+      this._canvas.height = savedCanvasH;
+      this._createdResourcesForSize(gl, savedPageW, savedPageH);
+      this.render();
     }
 
-    // Composite to a third FBO for readback.
-    const eof = createFbo(gl, w, h);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, eof.fbo);
-    gl.viewport(0, 0, w, h);
-    gl.clearColor(0, 0, 0, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(this._compositeProg);
-    this._writeUniforms(gl, w, h, lineSpacingPx, lineWidthPx, lineOffsetPx, marginXPx, marginLineWidthPx);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, epf.tex);
-    gl.uniform1i(this._compositeLocs.paperTex, 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, eif.tex);
-    gl.uniform1i(this._compositeLocs.inkTex, 1);
-    gl.bindVertexArray(this._quadVao);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-    // Read pixels.
-    const pixels = new Uint8Array(w * h * 4);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-
-    // Restore display framebuffer + size.
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this._pageW, this._pageH);
-
-    // Cleanup export FBOs.
-    gl.deleteFramebuffer(epf.fbo); gl.deleteTexture(epf.tex);
-    gl.deleteFramebuffer(eif.fbo); gl.deleteTexture(eif.tex);
-    gl.deleteFramebuffer(eof.fbo); gl.deleteTexture(eof.tex);
-
-    // Flip vertically (WebGL origin bottom-left -> PNG top-left).
-    const rowBytes = w * 4;
-    const flipped = new Uint8Array(w * h * 4);
-    for (let y = 0; y < h; y++) {
-      flipped.set(pixels.subarray((h - 1 - y) * rowBytes, (h - 1 - y) * rowBytes + rowBytes), y * rowBytes);
-    }
-
-    return await encodePng(flipped, w, h);
+    return blob;
   }
 
   resize() { this._dirty = true; }

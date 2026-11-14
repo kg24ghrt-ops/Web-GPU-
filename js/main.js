@@ -322,43 +322,21 @@ async function exportPng() {
     const scale = dpi / 96;
     const exportW = Math.max(1, Math.floor(mmToPx(size.widthMm) * scale));
     const exportH = Math.max(1, Math.floor(mmToPx(size.heightMm) * scale));
-    const png = await renderer.exportPng(exportW, exportH);
-    const blob = new Blob([png], { type: 'image/png' });
+    const blob = await renderer.exportPng(exportW, exportH);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
+    const isJpeg = blob.type === 'image/jpeg';
     a.href = url;
-    a.download = 'school-notebook-page.png';
+    a.download = isJpeg ? 'school-notebook-page.jpg' : 'school-notebook-page.png';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    setStatus('Exported ' + exportW + 'x' + exportH + ' (PNG)');
+    setStatus('Exported ' + exportW + 'x' + exportH + ' (' + (isJpeg ? 'JPEG fallback' : 'PNG') + ')');
   } catch (err) {
     const e = wrap(err, { module: 'gpu', operation: 'exportPng', retryable: true });
     logger.error('gpu', 'exportPng', e.toJSON());
-    // Fallback: draw the page canvas to a standard JPEG via canvas toBlob.
-    try {
-      const blob = await new Promise((resolve, reject) => {
-        try {
-          gpuCanvas.toBlob(resolve, 'image/jpeg', 0.95);
-        } catch (err) {
-          reject(err);
-        }
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'school-notebook-page.jpg';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setStatus('Exported (JPEG fallback)');
-    } catch (fallbackErr) {
-      const fe = wrap(fallbackErr, { module: 'gpu', operation: 'exportPngFallback', retryable: true });
-      logger.error('gpu', 'exportPngFallback', fe.toJSON());
-      setStatus('Export failed: ' + (fe.cause || fe.message), { error: true });
-    }
+    setStatus('Export failed: ' + (e.cause || e.message), { error: true });
   } finally {
     exportInFlight = false;
     btnExport.disabled = false;

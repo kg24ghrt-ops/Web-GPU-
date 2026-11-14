@@ -17,7 +17,6 @@
 import { logger } from '../common/logger.js';
 import { wrap } from '../common/errors.js';
 import { detectCapabilities, requestDevice, withinLimits } from './webgpu.js';
-import { encodePng } from './png.js';
 
 const SHADER_DIR = 'js/gpu/shaders';
 
@@ -529,154 +528,132 @@ export class WebGpuRenderer {
   }
 
   /**
-   * Export the complete rendered document to PNG bytes at the given
-   * resolution (independent of viewport/screen resolution).
-   * Returns a Promise<Uint8Array> of PNG data.
+   * Export the complete rendered document at the given resolution using the
+   * browser's built-in canvas.toBlob. Returns a Promise<Blob>.
    */
   async exportPng(exportW, exportH) {
     if (!this._initialized || this._lost || !this._device) {
       throw new Error('gpu: renderer not available for export');
     }
     const device = this._device;
-    if (!withinLimits(device, exportW, exportH)) {
-      throw new Error(`gpu: export size ${exportW}x${exportH} exceeds device limits`);
+
+    // Clamp to device limits.
+    const maxTex = device.limits.maxTextureDimension2D;
+    const scale = Math.min(1, maxTex / exportW, maxTex / exportH);
+    let clampedW = exportW;
+    let clampedH = exportH;
+    if (scale < 1) {
+      clampedW = Math.floor(exportW * scale);
+      clampedH = Math.floor(exportH * scale);
+      this._onStatus('Export clamped to ' + clampedW + 'x' + clampedH);
     }
 
-    const sx = exportW / this._pageW;
-    const sy = exportH / this._pageH;
-    const w = Math.max(1, Math.floor(exportW));
-    const h = Math.max(1, Math.floor(exportH));
+    const w = Math.max(1, Math.floor(clampedW));
+    const h = Math.max(1, Math.floor(clampedH));
 
-    const exportPaper = device.createTexture({
-      size: [w, h, 1],
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-    });
-    const exportInk = device.createTexture({
-      size: [w, h, 1],
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
-    const exportOutput = device.createTexture({
-      size: [w, h, 1],
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
-    });
+    // Save canvas and page dimensions.
+    const savedCanvasW = this._canvas.width;
+    const savedCanvasH = this._canvas.height;
+    const savedPageW = this._pageW;
+    const savedPageH = this._pageH;
 
-    const commandEncoder = device.createCommandEncoder();
-
-    // Paper at export size.
-    {
-      const pass = commandEncoder.beginComputePass();
-      pass.setPipeline(this._pipelinePaper);
-      const bg = device.createBindGroup({
-        layout: this._pipelinePaper.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: this._uniformBuffer } },
-          { binding: 1, resource: exportPaper },
-        ],
-      });
-      pass.setBindGroup(0, bg);
-      pass.dispatchWorkgroups(Math.ceil(w / 16), Math.ceil(h / 16));
-      pass.end();
-    }
-
-    // Ink at export size (scale stroke geometry).
-    const savedStrokes = this._strokes;
-    const savedVertexCount = this._strokeVertexCount;
-    const savedBuffer = this._strokeBuffer;
-    let scaleBuffer = null;
+    let blob = null;
     try {
-      const scaled = this._strokes.map((s) => ({
-        ...s,
-        points: s.points.map((p) => ({ x: p.x * sx, y: p.y * sy, t: p.t })),
-        width: s.width * Math.sqrt(sx * sy),
-      }));
-      scaleBuffer = this._buildStrokeBufferAt(device, scaled);
-      this._strokeBuffer = scaleBuffer.buffer;
-      this._strokeVertexCount = scaleBuffer.count;
-      this._dirty = false;
+      // Resize canvas to export size.
+      this._canvas.width = w;
+      this._canvas.height = h;
+      this._ctx.configure({
+        device,
+        format: this._canvasFormat,
+        alphaMode: 'premultiplied',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
 
+      // Temporarily adopt export size for rendering.
+      this._pageW = w;
+      this._pageH = h;
+      this._createdResourcesForSize(device, w, h);
+
+      // Scale uniforms for export resolution.
+      const sx = w / savedPageW;
+      const sy = h / savedPageH;
+      this._writeUniforms(device, w, h,
+        this._template ? mmToPx(this._template.lineSpacingMm) * sy : 8 * 3.7795 * sy,
+        this._template ? mmToPx(DEFAULT_RULING.lineWidthMm) * sy : 0.5 * 3.7795 * sy,
+        this._template ? mmToPx(this._template.topMarginMm) * sy : 25 * 3.7795 * sy,
+        this._template ? mmToPx(this._template.marginMm) * sx : 25 * 3.7795 * sx,
+        this._template ? mmToPx(1.2) * sy : 1.2 * 3.7795 * sy
+      );
+
+      // Upload strokes at export scale.
+      if (this._dirty) {
+        this._uploadStrokes(device);
+        this._dirty = false;
+      }
+
+      const commandEncoder = device.createCommandEncoder();
+
+      // 1. Paper compute pass.
+      {
+        const pass = commandEncoder.beginComputePass();
+        pass.setPipeline(this._pipelinePaper);
+        pass.setBindGroup(0, this._paperBindGroup(device));
+        pass.dispatchWorkgroups(Math.ceil(w / 16), Math.ceil(h / 16));
+        pass.end();
+      }
+
+      // 2. Ink render pass.
+      if (this._strokeVertexCount > 0) {
+        const rpd = {
+          colorAttachments: [{ view: this._inkTexture.createView(), clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' }],
+        };
+        const pass = commandEncoder.beginRenderPass(rpd);
+        pass.setPipeline(this._pipelineInk);
+        pass.setBindGroup(0, this._inkBindGroup(device));
+        pass.setVertexBuffer(0, this._strokeBuffer);
+        pass.draw(this._strokeVertexCount);
+        pass.end();
+      }
+
+      // 3. Composite to canvas texture.
+      const canvasTexture = this._ctx.getCurrentTexture();
       const rpd = {
-        colorAttachments: [
-          {
-            view: exportInk.createView(),
-            clearValue: { r: 0, g: 0, b: 0, a: 0 },
-            loadOp: 'clear',
-            storeOp: 'store',
-          },
-        ],
+        colorAttachments: [{ view: canvasTexture.createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store' }],
       };
       const pass = commandEncoder.beginRenderPass(rpd);
-      pass.setPipeline(this._pipelineInk);
-      pass.setBindGroup(0, this._inkBindGroup(device));
-      pass.setVertexBuffer(0, this._strokeBuffer);
-      pass.draw(this._strokeVertexCount);
+      pass.setPipeline(this._pipelineComposite);
+      pass.setBindGroup(0, this._compositeBindGroup(device, this._paperTexture, this._inkTexture));
+      pass.draw(4);
       pass.end();
-    } finally {
-      this._strokes = savedStrokes;
-      this._strokeVertexCount = savedVertexCount;
-      this._strokeBuffer = savedBuffer;
-      if (scaleBuffer && scaleBuffer.buffer && scaleBuffer.buffer !== savedBuffer) {
-        scaleBuffer.buffer.destroy();
+
+      device.queue.submit([commandEncoder.finish()]);
+      await device.queue.onSubmittedWorkDone();
+
+      // Capture the frame while it is still on the canvas.
+      blob = await new Promise((resolve) => {
+        this._canvas.toBlob(resolve, 'image/png');
+      });
+      if (!blob) {
+        blob = await new Promise((resolve) => {
+          this._canvas.toBlob(resolve, 'image/jpeg', 0.95);
+        });
       }
+    } finally {
+      // Restore on-screen canvas size and re-render.
+      this._pageW = savedPageW;
+      this._pageH = savedPageH;
+      this._canvas.width = savedCanvasW;
+      this._canvas.height = savedCanvasH;
+      this._ctx.configure({
+        device,
+        format: this._canvasFormat,
+        alphaMode: 'premultiplied',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      await this.render();
     }
 
-    // Composite paper + ink -> exportOutput.
-    this._writeUniforms(device, w, h,
-      this._template ? mmToPx(this._template.lineSpacingMm) * sy : 8 * 3.7795 * sy,
-      this._template ? mmToPx(DEFAULT_RULING.lineWidthMm) * sy : 0.5 * 3.7795 * sy,
-      this._template ? mmToPx(this._template.topMarginMm) * sy : 25 * 3.7795 * sy,
-      this._template ? mmToPx(this._template.marginMm) * sx : 25 * 3.7795 * sx,
-      this._template ? mmToPx(1.2) * sy : 1.2 * 3.7795 * sy
-    );
-    const compositeBg = this._compositeBindGroup(device, exportPaper, exportInk);
-    const rpd = {
-      colorAttachments: [
-        { view: exportOutput.createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store' },
-      ],
-    };
-    const pass = commandEncoder.beginRenderPass(rpd);
-    pass.setPipeline(this._pipelineComposite);
-    pass.setBindGroup(0, compositeBg);
-    pass.draw(4);
-    pass.end();
-
-    device.queue.submit([commandEncoder.finish()]);
-    await device.queue.onSubmittedWorkDone();
-
-    // Read back pixels from exportOutput.
-    const rowBytes = Math.ceil((w * 4) / 256) * 256;
-    const bufferSize = rowBytes * h;
-    const readback = device.createBuffer({
-      size: bufferSize,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });
-    const ce2 = device.createCommandEncoder();
-    ce2.copyTextureToBuffer(
-      { texture: exportOutput },
-      { buffer: readback, bytesPerRow: rowBytes, rowsPerImage: h },
-      { origin: [0, 0, 0], extent: [w, h, 1] }
-    );
-    device.queue.submit([ce2.finish()]);
-    await device.queue.onSubmittedWorkDone();
-
-    await readback.mapAsync(GPUMapMode.READ);
-    const mapped = new Uint8Array(readback.getMappedRange());
-    const pixels = new Uint8Array(w * h * 4);
-    for (let y = 0; y < h; y++) {
-      const src = y * rowBytes;
-      const dst = y * w * 4;
-      pixels.set(mapped.subarray(src, src + w * 4), dst);
-    }
-    readback.unmap();
-
-    exportPaper.destroy();
-    exportInk.destroy();
-    exportOutput.destroy();
-    readback.destroy();
-
-    return encodePng(pixels, w, h);
+    return blob;
   }
 
   _buildStrokeBufferAt(device, strokes) {
