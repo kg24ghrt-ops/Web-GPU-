@@ -118,7 +118,7 @@ void main() {
     1.0 - 0.04 * fibreMask + 0.02 * grain - 0.015 * stainMask,
     1.0 - 0.03 * fibreMask + 0.015 * grain - 0.01 * stainMask);
 
-  fragColor = vec4(outColour, height);
+  fragColor = vec4(outColour, clamp(0.5 + height * 4.0, 0.0, 1.0));
 }`;
 
 const INK_VS = `#version 300 es
@@ -186,7 +186,9 @@ uniform sampler2D u_inkTex;
 out vec4 fragColor;
 
 vec4 samplePaper(vec2 uv) {
-  return texture(u_paperTex, clamp(uv, 0.0, 1.0));
+  vec4 p = texture(u_paperTex, clamp(uv, 0.0, 1.0));
+  p.a = (p.a - 0.5) / 4.0;
+  return p;
 }
 vec4 sampleInk(vec2 uv) {
   return texture(u_inkTex, clamp(uv, 0.0, 1.0));
@@ -203,7 +205,7 @@ void main() {
   float h = samplePaper(uv).a;
   float hx = samplePaper(uv + tx).a - samplePaper(uv - tx).a;
   float hy = samplePaper(uv + ty).a - samplePaper(uv - ty).a;
-  vec3 normal = normalize(vec3(-hx * 0.5, -hy * 0.5, 1.0));
+  vec3 normal = normalize(vec3(-hx * 3.0, -hy * 3.0, 1.0));
   float grad = sqrt(hx * hx + hy * hy) * 0.5;
   float roughness = clamp(grad, 0.0, 1.0);
   vec3 lightDir = normalize(u_lightDir);
@@ -255,7 +257,7 @@ void main() {
   // Ink layer.
   vec4 ink = sampleInk(uv);
   vec3 outColour = paperWithRule * (1.0 - ink.a) + ink.rgb;
-  float outAlpha = 1.0 - (1.0 - paper.a) * (1.0 - ink.a);
+  float outAlpha = 1.0;
 
   // Edge vignette.
   float d = distance(uv, vec2(0.5, 0.5));
@@ -524,14 +526,6 @@ export class WebGL2Renderer {
     if (!w || !h) return;
     this._createdResourcesForSize(gl, w, h);
 
-    // Write composite uniforms.
-    const lineSpacingPx = this._template ? MM_TO_PX * this._template.lineSpacingMm : 8 * 3.7795;
-    const lineWidthPx = this._template ? MM_TO_PX * this._template.lineWidthMm : 0.5 * 3.7795;
-    const lineOffsetPx = this._template ? MM_TO_PX * this._template.topMarginMm : 25 * 3.7795;
-    const marginXPx = this._template ? MM_TO_PX * this._template.marginMm : 25 * 3.7795;
-    const marginLineWidthPx = this._template ? MM_TO_PX * 1.2 : 1.2 * 3.7795;
-    this._writeUniforms(gl, w, h, lineSpacingPx, lineWidthPx, lineOffsetPx, marginXPx, marginLineWidthPx);
-
     // 1. Paper pass -> paper FBO.
     gl.bindFramebuffer(gl.FRAMEBUFFER, this._paperFbo);
     gl.viewport(0, 0, w, h);
@@ -566,6 +560,15 @@ export class WebGL2Renderer {
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this._compositeProg);
+
+    // Write composite uniforms now that the composite program is bound.
+    const lineSpacingPx = this._template ? MM_TO_PX * this._template.lineSpacingMm : 8 * 3.7795;
+    const lineWidthPx = this._template ? MM_TO_PX * this._template.lineWidthMm : 0.5 * 3.7795;
+    const lineOffsetPx = this._template ? MM_TO_PX * this._template.topMarginMm : 25 * 3.7795;
+    const marginXPx = this._template ? MM_TO_PX * this._template.marginMm : 25 * 3.7795;
+    const marginLineWidthPx = this._template ? MM_TO_PX * 1.2 : 1.2 * 3.7795;
+    this._writeUniforms(gl, w, h, lineSpacingPx, lineWidthPx, lineOffsetPx, marginXPx, marginLineWidthPx);
+
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._paperTex);
     gl.uniform1i(this._compositeLocs.paperTex, 0);

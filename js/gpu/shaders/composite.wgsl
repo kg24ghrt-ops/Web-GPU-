@@ -53,7 +53,7 @@ fn texCoords(uv: vec2<f32>) -> vec2<i32> {
 }
 
 fn sampleHeight(uv: vec2<f32>) -> f32 {
-  return textureLoad(paperTex, texCoords(uv), 0).a;
+  return (textureLoad(paperTex, texCoords(uv), 0).a - 0.5) / 4.0;
 }
 
 fn normalAndRoughnessFromHeight(uv: vec2<f32>) -> vec3<f32> {
@@ -62,7 +62,7 @@ fn normalAndRoughnessFromHeight(uv: vec2<f32>) -> vec3<f32> {
   let h = sampleHeight(uv);
   let hx = sampleHeight(uv + tx) - sampleHeight(uv - tx);
   let hy = sampleHeight(uv + ty) - sampleHeight(uv - ty);
-  let normal = normalize(vec3<f32>(-hx * 0.5, -hy * 0.5, 1.0));
+  let normal = normalize(vec3<f32>(-hx * 3.0, -hy * 3.0, 1.0));
   let grad = sqrt(hx * hx + hy * hy) * 0.5;
   let roughness = clamp(grad, 0.0, 1.0);
   return vec3<f32>(normal.x, normal.y, roughness);
@@ -153,7 +153,7 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
   // ---- Ink layer: premultiplied alpha over paper ----
   let ink = textureSample(inkTex, inkSampler, uv);
   let outColour = paperWithRule * (1.0 - ink.a) + ink.rgb;
-  let outAlpha = 1.0 - (1.0 - paper.a) * (1.0 - ink.a);
+  let outAlpha = 1.0;
 
   // ---- Edge vignette: subtle darkening toward page edges for realism ----
   let d = distance(uv, vec2<f32>(0.5, 0.5));

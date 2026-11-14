@@ -148,5 +148,5 @@ fn mainCs(@builtin(global_invocation_id) id: vec3<u32>) {
     1.0 - 0.03 * fibreMask + 0.015 * grain - 0.01 * stainMask
   );
 
-  textureStore(paperTex, id.xy, vec4<f32>(outColour, height));
+  textureStore(paperTex, id.xy, vec4<f32>(outColour, clamp(0.5 + height * 4.0, 0.0, 1.0)));
 }
