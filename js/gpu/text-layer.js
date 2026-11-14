@@ -11,11 +11,27 @@
  * caret always sits exactly where a glyph is drawn.
  */
 
-import { layoutText, caretPosition } from '../typography/typography.js';
+import { layoutText, caretPosition, graphemeClusters } from '../typography/typography.js';
 import { PEN_MATERIALS } from './renderer.js';
 
 /** Ink colour used for text and caret — same blue-black as the pen. */
 export const TEXT_INK_COLOR = PEN_MATERIALS.ballpoint.color; // '#1a3a5c'
+
+/**
+ * Tiny deterministic hash from a position → 0..1, used for per-glyph density
+ * variation so repeated letters are not identical.
+ */
+function glyphHash(x, y, i) {
+  let h = (Math.floor(x) * 7391 + Math.floor(y) * 193 + i * 9773) | 0;
+  h = (h ^ (h >> 16)) * 0x45d9f3b;
+  h = (h ^ (h >> 16)) * 0x45d9f3b;
+  h = h ^ (h >> 16);
+  return (h >>> 0) / 4294967296;
+}
+
+/** Density range for per-glyph variation (kept subtle). */
+const GLYPH_DENSITY_MIN = 0.93;
+const GLYPH_DENSITY_MAX = 1.00;
 
 /**
  * Create an offscreen canvas for the text layer at the given CSS px size.
@@ -58,7 +74,17 @@ export function rasterizeText(canvas, text, fontSpec, widthPx, lineHeightPx, ori
 
   let idx = 0;
   for (const line of lines) {
-    ctx.fillText(line.text, originX, originY + idx * lineHeightPx);
+    const y = originY + idx * lineHeightPx;
+    let x = originX;
+    const clusters = graphemeClusters(line.text);
+    clusters.forEach((c, clusterIdx) => {
+      const density = GLYPH_DENSITY_MIN + glyphHash(x, y, clusterIdx) * (GLYPH_DENSITY_MAX - GLYPH_DENSITY_MIN);
+      const gw = ctx.measureText(c.text).width;
+      ctx.globalAlpha = density;
+      ctx.fillText(c.text, x, y);
+      ctx.globalAlpha = 1.0;
+      x += gw;
+    });
     idx++;
   }
 
