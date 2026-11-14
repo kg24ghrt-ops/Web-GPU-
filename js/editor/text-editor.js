@@ -103,15 +103,17 @@ export class TextEditor {
     this._el.style.overflowY = 'hidden';
     this._el.style.boxSizing = 'border-box';
 
-    // Typography: Myanmar-capable font stack, pre-wrap for phrase spaces/ZWSP.
+    // Typography: chosen handwriting font. The editor is invisible
+    // (transparent text and caret) — it exists only for keyboard/IME input;
+    // the visible text and caret are rendered on the GPU layer.
     this._el.style.fontFamily = this._config.fontFamily;
     this._el.style.fontSize = snapPx(this._config.fontSizePx) + 'px';
     this._el.style.lineHeight = snapPx(this._config.lineHeightPx) + 'px';
     this._el.style.whiteSpace = 'pre-wrap';
     this._el.style.wordWrap = 'break-word';
     this._el.style.overflowWrap = 'anywhere';
-    this._el.style.color = '#1a3a5c';
-    this._el.style.caretColor = '#1a3a5c';
+    this._el.style.color = 'transparent';
+    this._el.style.caretColor = 'transparent';
     this._el.style.outline = 'none';
 
     // Disabled by default — enabled when text mode is active.
@@ -163,6 +165,37 @@ export class TextEditor {
     if (this._el && this._enabled) {
       this._el.focus();
     }
+  }
+
+  /**
+   * Best-effort caret offset (char index within the editor's text content).
+   * Used to place the GPU caret at the same position the input caret would be.
+   * @returns {number} Caret offset
+   */
+  caretOffset() {
+    if (!this._el) return 0;
+    const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
+    if (!sel || sel.rangeCount === 0) return this._el.textContent.length;
+    const range = sel.getRangeAt(0);
+    const container = range.startContainer;
+    if (!container || !this._el.contains(container)) return this._el.textContent.length;
+    let offset = 0;
+    let hit = false;
+    const walk = (node) => {
+      if (hit) return;
+      if (node === container) {
+        offset += range.startOffset;
+        hit = true;
+        return;
+      }
+      if (node.nodeType === Node.TEXT_NODE) {
+        offset += node.textContent.length;
+      } else {
+        for (const child of node.childNodes) walk(child);
+      }
+    };
+    for (const child of this._el.childNodes) walk(child);
+    return hit ? offset : this._el.textContent.length;
   }
 
   /**

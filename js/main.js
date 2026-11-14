@@ -7,7 +7,7 @@ import { Notebook } from './notebook/notebook.js';
 import { mmToPx } from './units.js';
 import { getTemplate, listTemplates } from './paper/templates.js';
 import { getPaperSize } from './paper/sizes.js';
-import { ensureFonts, FONT_FAMILY, FONT_SIZE } from './typography/typography.js';
+import { ensureFonts, FONT_SIZE, loadFonts, resolveFont, fontIdForScript, DEFAULT_FONT, layoutText, containsMyanmar } from './typography/typography.js';
 import { TextEditor } from './editor/text-editor.js';
 import { Stroke } from './handwriting/handwriting.js';
 import { WebGpuRenderer, PEN_MATERIALS } from './gpu/renderer.js';
@@ -31,6 +31,8 @@ let saveTimer = null;
 let currentPageId = null;
 let currentPen = PEN_MATERIALS.ballpoint;
 let exportInFlight = false;
+let fontSelectEn = null;
+let fontSelectMy = null;
 
 const pageView = $('#page-view');
 const pageList = $('.page-list__items');
@@ -48,6 +50,58 @@ for (const t of listTemplates()) {
   templateSelect.appendChild(o);
 }
 templateSelect.value = settings.get('paper.type');
+
+function fontOptions(script) {
+  const frag = document.createDocumentFragment();
+  for (const [id, spec] of Object.entries(FONT_SPEC)) {
+    if (spec.script !== script) continue;
+    const o = document.createElement('option');
+    o.value = id;
+    o.textContent = spec.label;
+    frag.appendChild(o);
+  }
+  return frag;
+}
+
+function setupFontPickers() {
+  const group = document.createElement('div');
+  group.className = 'toolbar__group';
+  group.style.fontSize = '12px';
+
+  const labEn = document.createElement('label');
+  labEn.textContent = 'English: ';
+  fontSelectEn = document.createElement('select');
+  fontSelectEn.appendChild(fontOptions('latin'));
+  fontSelectEn.value = notebook ? notebook.fontChoice('english') : DEFAULT_FONT.english;
+  labEn.appendChild(fontSelectEn);
+  group.appendChild(labEn);
+
+  const labMy = document.createElement('label');
+  labMy.textContent = 'Myanmar: ';
+  fontSelectMy = document.createElement('select');
+  fontSelectMy.appendChild(fontOptions('myanmar'));
+  fontSelectMy.value = notebook ? notebook.fontChoice('myanmar') : DEFAULT_FONT.myanmar;
+  labMy.appendChild(fontSelectMy);
+  group.appendChild(labMy);
+
+  const applyFont = () => {
+    if (!notebook) return;
+    const en = fontSelectEn.value;
+    const my = fontSelectMy.value;
+    notebook.setFontChoice('english', en);
+    notebook.setFontChoice('myanmar', my);
+    loadFonts(notebook.fontSettings).then(() => {
+      renderPage(notebook.currentPage()).then(() => saveDebounced());
+    });
+  };
+  fontSelectEn.addEventListener('change', applyFont);
+  fontSelectMy.addEventListener('change', applyFont);
+
+  const toolbar = document.querySelector('.toolbar');
+  if (toolbar) toolbar.appendChild(group);
+}
+
+setupFontPickers();
 
 function saveDebounced() {
   if (saveTimer) clearTimeout(saveTimer);
@@ -156,6 +210,14 @@ async function renderPage(page) {
   const area = writingAreaRect(t, size, pageW, pageH);
   const lineHeightPx = mmToPx(t.lineSpacingMm > 0 ? t.lineSpacingMm : 7.1);
 
+  // Choose the font for this page's text by script, so English uses the
+  // chosen handwriting font and Myanmar uses the chosen Myanmar font. Both
+  // choices are stored per notebook.
+  const pageText = notebook.getText(page.id);
+  const script = containsMyanmar(pageText) ? 'myanmar' : 'english';
+  const fontId = notebook.fontChoice(script);
+  const fontSpec = resolveFont(fontId, parseFloat(FONT_SIZE));
+
   textEditor = new TextEditor(
     {
       writeWidthPx: area.w,
@@ -164,7 +226,7 @@ async function renderPage(page) {
       originYPx: area.y,
       baselineOffsetPx: parseFloat(FONT_SIZE) * 0.75,
       lineHeightPx,
-      fontFamily: FONT_FAMILY,
+      fontFamily: fontSpec.family,
       fontSizePx: parseFloat(FONT_SIZE),
     },
     {
@@ -236,6 +298,9 @@ async function load() {
   }
   renderPageList();
   templateSelect.value = notebook.currentPage().paperType || settings.get('paper.type');
+  if (fontSelectEn) fontSelectEn.value = notebook.fontChoice('english');
+  if (fontSelectMy) fontSelectMy.value = notebook.fontChoice('myanmar');
+  await loadFonts(notebook.fontSettings);
   let webgpuOk = false;
   try {
     webgpuOk = await initRenderer();
