@@ -8,6 +8,7 @@ import { mmToPx } from './units.js';
 import { getTemplate, listTemplates } from './paper/templates.js';
 import { getPaperSize } from './paper/sizes.js';
 import { ensureFonts, FONT_SIZE, loadFonts, resolveFont, fontIdForScript, DEFAULT_FONT, layoutText, containsMyanmar } from './typography/typography.js';
+import { createTextCanvas, rasterizeText, caretAt } from './gpu/text-layer.js';
 import { TextEditor } from './editor/text-editor.js';
 import { Stroke } from './handwriting/handwriting.js';
 import { WebGpuRenderer, PEN_MATERIALS } from './gpu/renderer.js';
@@ -33,6 +34,13 @@ let currentPen = PEN_MATERIALS.ballpoint;
 let exportInFlight = false;
 let fontSelectEn = null;
 let fontSelectMy = null;
+
+// Text layer state (owned by the GPU layer; the contenteditable is invisible).
+let textCanvas = null;
+let blinkTimer = null;
+let caretVisible = true;
+let currentText = null; // { text, fontSpec, widthPx, lineHeightPx, originX, originY, caretX, caretLineY }
+const BLINK_MS = 500;
 
 const pageView = $('#page-view');
 const pageList = $('.page-list__items');
@@ -196,16 +204,6 @@ async function renderPage(page) {
   pageEl.appendChild(gpuCanvas);
 
   const strokes = (notebook.getStrokes(page.id) || []).map((s) => Stroke.fromJSON(s));
-  renderer.setDocument({
-    pageW,
-    pageH,
-    template: t,
-    size,
-    strokes,
-    pen: currentPen,
-  });
-  renderer.setStrokes(strokes);
-  await renderer.render();
 
   const area = writingAreaRect(t, size, pageW, pageH);
   const lineHeightPx = mmToPx(t.lineSpacingMm > 0 ? t.lineSpacingMm : 7.1);
@@ -217,6 +215,31 @@ async function renderPage(page) {
   const script = containsMyanmar(pageText) ? 'myanmar' : 'english';
   const fontId = notebook.fontChoice(script);
   const fontSpec = resolveFont(fontId, parseFloat(FONT_SIZE));
+
+  // --- GPU text layer: rasterize wrapped text to an offscreen canvas -------
+  stopBlink();
+  textCanvas = createTextCanvas(pageW, pageH);
+  const caretOffset = 0;
+  const caretPos = caretAt(pageText, fontSpec, area.w, lineHeightPx, area.x, area.y, caretOffset);
+  rasterizeText(textCanvas, pageText, fontSpec, area.w, lineHeightPx, area.x, area.y,
+    caretPos ? caretPos.x : null, caretPos ? caretPos.y : null, caretVisible);
+  renderer.setTextImage(textCanvas);
+  currentText = {
+    text: pageText, fontSpec, widthPx: area.w, lineHeightPx,
+    originX: area.x, originY: area.y, caretOffset,
+  };
+
+  renderer.setDocument({
+    pageW,
+    pageH,
+    template: t,
+    size,
+    strokes,
+    pen: currentPen,
+  });
+  renderer.setStrokes(strokes);
+  await renderer.render();
+  startBlink();
 
   textEditor = new TextEditor(
     {
@@ -234,6 +257,8 @@ async function renderPage(page) {
         notebook.setText(page.id, text);
         saveDebounced();
         handleOverflow();
+        if (textEditor) currentText.caretOffset = textEditor.caretOffset();
+        redrawTextLayer();
       },
       onOverflow: handleOverflow,
     }
@@ -242,9 +267,26 @@ async function renderPage(page) {
   textEditor.enable(settings.get('ui.mode') === 'text');
   textEditor.text(notebook.getText(page.id));
   if (settings.get('ui.mode') === 'text') textEditor.focus();
+  if (currentText) currentText.caretOffset = textEditor.caretOffset();
 
   attachHandwriting(gpuCanvas, page.id);
   currentPageId = page.id;
+  startBlink();
+}
+
+function overflowLinesFor(page) {
+  const t = getTemplate(page.paperType || settings.get('paper.type'));
+  const size = getPaperSize(t.paperSizeId);
+  const pageW = mmToPx(size.widthMm);
+  const pageH = mmToPx(size.heightMm);
+  const area = writingAreaRect(t, size, pageW, pageH);
+  const lineHeightPx = mmToPx(t.lineSpacingMm > 0 ? t.lineSpacingMm : 7.1);
+  const maxLines = Math.floor(area.h / lineHeightPx);
+  const text = notebook.getText(page.id);
+  const script = containsMyanmar(text) ? 'myanmar' : 'english';
+  const fontSpec = resolveFont(notebook.fontChoice(script), parseFloat(FONT_SIZE));
+  const { lines } = layoutText(text, fontSpec, area.w);
+  return { lines, maxLines, area, lineHeightPx, fontSpec };
 }
 
 function overflowLinesFor(page) {
@@ -282,6 +324,31 @@ function handleOverflow() {
     setStatus('New page created (page full)');
     saveDebounced();
   });
+}
+
+function redrawTextLayer() {
+  if (!currentText || !renderer || !renderer.available || !textCanvas) return;
+  const { text, fontSpec, widthPx, lineHeightPx, originX, originY, caretOffset } = currentText;
+  const caretPos = caretAt(text, fontSpec, widthPx, lineHeightPx, originX, originY, caretOffset);
+  rasterizeText(textCanvas, text, fontSpec, widthPx, lineHeightPx, originX, originY,
+    caretPos ? caretPos.x : null, caretPos ? caretPos.y : null, caretVisible);
+  renderer.setTextImage(textCanvas);
+  renderer.render();
+}
+
+function startBlink() {
+  stopBlink();
+  caretVisible = true;
+  if (settings.get('ui.mode') !== 'text') return;
+  blinkTimer = setInterval(() => {
+    caretVisible = !caretVisible;
+    redrawTextLayer();
+  }, BLINK_MS);
+}
+
+function stopBlink() {
+  if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
+  caretVisible = true;
 }
 function setMode(mode) {
   settings.set('ui.mode', mode);
@@ -414,7 +481,32 @@ async function exportPng() {
     const scale = dpi / 96;
     const exportW = Math.max(1, Math.floor(mmToPx(size.widthMm) * scale));
     const exportH = Math.max(1, Math.floor(mmToPx(size.heightMm) * scale));
+
+    // Render the text layer at export resolution so Save PNG includes the text.
+    stopBlink();
+    const displayText = currentText;
+    if (displayText) {
+      const exportCanvas = createTextCanvas(exportW, exportH);
+      const sx = exportW / mmToPx(size.widthMm);
+      const sy = exportH / mmToPx(size.heightMm);
+      const scaledFont = { ...displayText.fontSpec, sizePx: displayText.fontSpec.sizePx * scale };
+      rasterizeText(exportCanvas, displayText.text, scaledFont,
+        displayText.widthPx * sx, displayText.lineHeightPx * sy,
+        displayText.originX * sx, displayText.originY * sy,
+        displayText.caretOffset != null ? (displayText.caretX != null ? displayText.caretX * sx : null) : null,
+        displayText.caretLineY != null ? displayText.caretLineY * sy : null,
+        caretVisible);
+      renderer.setTextImage(exportCanvas);
+    }
+
     const blob = await renderer.exportPng(exportW, exportH);
+
+    // Restore the display text layer and re-render the on-screen page.
+    if (displayText) {
+      renderer.setTextImage(textCanvas);
+      redrawTextLayer();
+      startBlink();
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const isJpeg = blob.type === 'image/jpeg';

@@ -17,7 +17,6 @@
 import { logger } from '../common/logger.js';
 import { wrap } from '../common/errors.js';
 import { detectCapabilities, requestDevice, withinLimits } from './webgpu.js';
-
 const SHADER_DIR = 'js/gpu/shaders';
 
 /** Pen material configurations (ballpoint vs gel). */
@@ -160,6 +159,13 @@ export class WebGpuRenderer {
     this._initialized = false;
     this._lost = false;
     this._canvasFormat = null;
+
+    // Text layer: offscreen 2D canvas rasterized by js/gpu/text-layer.js,
+    // uploaded as a texture and composited over the lit paper.
+    this._textImage = null;
+    this._textTexture = null;
+    this._textSampler = null;
+    this._textDirty = true;
 
     // Document model (plain data, GPU-independent).
     this._pageW = 0;
@@ -306,6 +312,7 @@ export class WebGpuRenderer {
   _createSamplers(device) {
     this._paperSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     this._inkSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+    this._textSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
   }
 
   _createUniformBuffer(device) {
@@ -335,6 +342,11 @@ export class WebGpuRenderer {
       format: 'rgba8unorm',
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
+    this._textTexture = device.createTexture({
+      size: [w, h, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
   }
 
   _paperBindGroup(device) {
@@ -358,7 +370,7 @@ export class WebGpuRenderer {
     return this._bindGroupInk;
   }
 
-  _compositeBindGroup(device, paperTex, inkTex) {
+  _compositeBindGroup(device, paperTex, inkTex, textTex) {
     return device.createBindGroup({
       layout: this._pipelineComposite.getBindGroupLayout(0),
       entries: [
@@ -367,6 +379,8 @@ export class WebGpuRenderer {
         { binding: 2, resource: this._paperSampler },
         { binding: 3, resource: inkTex },
         { binding: 4, resource: this._inkSampler },
+        { binding: 5, resource: textTex },
+        { binding: 6, resource: this._textSampler },
       ],
     });
   }
@@ -392,6 +406,16 @@ export class WebGpuRenderer {
   setPen(pen) {
     this._pen = pen || PEN_MATERIALS.ballpoint;
     this._dirty = true;
+  }
+
+  /**
+   * Provide the offscreen text-layer canvas. Uploaded to a texture on the next
+   * render (or export). Redraw of the source canvas is owned by the caller.
+   * @param {HTMLCanvasElement} canvas - Text layer canvas (page resolution)
+   */
+  setTextImage(canvas) {
+    this._textImage = canvas;
+    this._textDirty = true;
   }
 
   /** Render one display frame to the configured canvas. */
@@ -450,6 +474,16 @@ export class WebGpuRenderer {
       pass.end();
     }
 
+    // Text layer: upload the rasterized text canvas to a texture (only when it changes).
+    if (this._textDirty && this._textImage) {
+      device.queue.copyExternalImageToTexture(
+        { source: this._textImage },
+        { texture: this._textTexture },
+        [this._textImage.width, this._textImage.height],
+      );
+      this._textDirty = false;
+    }
+
     // 3. Composite: full-screen quad to the canvas texture.
     const canvasTexture = this._ctx.getCurrentTexture();
     const rpd = {
@@ -464,7 +498,7 @@ export class WebGpuRenderer {
     };
     const pass = commandEncoder.beginRenderPass(rpd);
     pass.setPipeline(this._pipelineComposite);
-    pass.setBindGroup(0, this._compositeBindGroup(device, this._paperTexture, this._inkTexture));
+    pass.setBindGroup(0, this._compositeBindGroup(device, this._paperTexture, this._inkTexture, this._textTexture));
     pass.draw(4);
     pass.end();
 
@@ -615,6 +649,16 @@ export class WebGpuRenderer {
         pass.end();
       }
 
+      // Text layer: upload the export-resolution text canvas to the texture.
+      if (this._textDirty && this._textImage) {
+        device.queue.copyExternalImageToTexture(
+          { source: this._textImage },
+          { texture: this._textTexture },
+          [this._textImage.width, this._textImage.height],
+        );
+        this._textDirty = false;
+      }
+
       // 3. Composite to canvas texture.
       const canvasTexture = this._ctx.getCurrentTexture();
       const rpd = {
@@ -622,7 +666,7 @@ export class WebGpuRenderer {
       };
       const pass = commandEncoder.beginRenderPass(rpd);
       pass.setPipeline(this._pipelineComposite);
-      pass.setBindGroup(0, this._compositeBindGroup(device, this._paperTexture, this._inkTexture));
+      pass.setBindGroup(0, this._compositeBindGroup(device, this._paperTexture, this._inkTexture, this._textTexture));
       pass.draw(4);
       pass.end();
 

@@ -181,6 +181,7 @@ uniform vec3 u_lightDir;
 uniform float u_ambient;
 uniform sampler2D u_paperTex;
 uniform sampler2D u_inkTex;
+uniform sampler2D u_textTex;
 out vec4 fragColor;
 
 vec4 samplePaper(vec2 uv) {
@@ -258,7 +259,15 @@ void main() {
   vec4 ink = sampleInk(uv);
   float inkPool = mix(0.85, 1.0, clamp(0.5 - hPaper * 3.0, 0.0, 1.0));
   float inkAlpha = ink.a * inkPool;
-  vec3 outColour = paperWithRule * (1.0 - inkAlpha) + ink.rgb * inkPool;
+  vec3 coloured = paperWithRule * (1.0 - inkAlpha) + ink.rgb * inkPool;
+
+  // Text layer: coverage pools in fibre valleys, soft edge, lit like paper.
+  vec4 text = texture(u_textTex, clamp(uv, 0.0, 1.0));
+  float textCoverage = text.a;
+  float textAlpha = textCoverage * inkPool;
+  vec3 textColour = vec3(0.102, 0.227, 0.361); // ballpoint blue-black #1a3a5c
+  vec3 litText = textColour * lighting;
+  vec3 outColour = coloured * (1.0 - textAlpha) + litText * inkPool;
   float outAlpha = 1.0;
 
   // Edge vignette + thickness rim + directional curl.
@@ -339,6 +348,7 @@ export class WebGL2Renderer {
     // Resources
     this._paperFbo = null; this._paperTex = null;
     this._inkFbo = null; this._inkTex = null;
+    this._textFbo = null; this._textTex = null;
     this._quadVao = null; this._quadBuf = null;
     this._strokeVao = null; this._strokeBuf = null;
     this._strokeVertexCount = 0;
@@ -348,6 +358,10 @@ export class WebGL2Renderer {
     this._template = null; this._strokes = [];
     this._pen = PEN_MATERIALS.ballpoint;
     this._dirty = true;
+
+    // Text layer.
+    this._textImage = null;
+    this._textDirty = true;
   }
 
   get available() { return this._available && this._initialized; }
@@ -402,6 +416,7 @@ export class WebGL2Renderer {
         ambient: loc('u_ambient'),
         paperTex: loc('u_paperTex'),
         inkTex: loc('u_inkTex'),
+        textTex: loc('u_textTex'),
       };
     };
     this._paperLocs = u(this._paperProg);
@@ -437,6 +452,7 @@ export class WebGL2Renderer {
     if (this._paperTex) gl.deleteTexture(this._paperTex);
     if (this._inkFbo) gl.deleteFramebuffer(this._inkFbo);
     if (this._inkTex) gl.deleteTexture(this._inkTex);
+    if (this._textTex) gl.deleteTexture(this._textTex);
 
     const pf = createFbo(gl, w, h);
     this._paperFbo = pf.fbo;
@@ -447,6 +463,17 @@ export class WebGL2Renderer {
     const inf = createFbo(gl, w, h);
     this._inkFbo = inf.fbo;
     this._inkTex = inf.tex;
+
+    // Text layer texture (linear filtered for soft glyph edges).
+    const textTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, textTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    this._textTex = textTex;
 
     // Stroke geometry vertex buffer.
     const sbuf = gl.createBuffer();
@@ -485,6 +512,11 @@ export class WebGL2Renderer {
 
   setStrokes(strokes) { this._strokes = strokes || []; this._dirty = true; }
   setPen(pen) { this._pen = pen || PEN_MATERIALS.ballpoint; this._dirty = true; }
+
+  setTextImage(canvas) {
+    this._textImage = canvas;
+    this._textDirty = true;
+  }
 
   _uploadStrokes() {
     let total = 0;
@@ -561,6 +593,15 @@ export class WebGL2Renderer {
       gl.disable(gl.BLEND);
     }
 
+    // Text layer: upload the rasterized text canvas (only when it changes).
+    if (this._textDirty && this._textImage) {
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this._textTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this._textImage);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      this._textDirty = false;
+    }
+
     // 3. Composite -> canvas.
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, w, h);
@@ -582,6 +623,9 @@ export class WebGL2Renderer {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._inkTex);
     gl.uniform1i(this._compositeLocs.inkTex, 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this._textTex);
+    gl.uniform1i(this._compositeLocs.textTex, 2);
     gl.bindVertexArray(this._quadVao);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindVertexArray(null);
@@ -680,12 +724,25 @@ export class WebGL2Renderer {
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.useProgram(this._compositeProg);
       this._writeUniforms(gl, w, h, lineSpacingPx, lineWidthPx, lineOffsetPx, marginXPx, marginLineWidthPx);
+
+      // Text layer: upload the export-resolution text canvas (only when it changes).
+      if (this._textDirty && this._textImage) {
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, this._textTex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this._textImage);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        this._textDirty = false;
+      }
+
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this._paperTex);
       gl.uniform1i(this._compositeLocs.paperTex, 0);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, this._inkTex);
       gl.uniform1i(this._compositeLocs.inkTex, 1);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this._textTex);
+      gl.uniform1i(this._compositeLocs.textTex, 2);
       gl.bindVertexArray(this._quadVao);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 

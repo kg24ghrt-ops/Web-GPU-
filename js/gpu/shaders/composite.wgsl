@@ -43,6 +43,8 @@ struct Uniforms {
 @group(0) @binding(2) var paperSampler: sampler;
 @group(0) @binding(3) var inkTex: texture_2d<f32>;
 @group(0) @binding(4) var inkSampler: sampler;
+@group(0) @binding(5) var textTex: texture_2d<f32>;
+@group(0) @binding(6) var textSampler: sampler;
 
 fn dims() -> vec2<f32> {
   return vec2<f32>(uniforms.pageWidthPx, uniforms.pageHeightPx);
@@ -157,7 +159,15 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
   let ink = textureSample(inkTex, inkSampler, uv);
   let inkPool = mix(0.85, 1.0, clamp(0.5 - h * 3.0, 0.0, 1.0));
   let inkAlpha = ink.a * inkPool;
-  let outColour = paperWithRule * (1.0 - inkAlpha) + ink.rgb * inkPool;
+  let coloured = paperWithRule * (1.0 - inkAlpha) + ink.rgb * inkPool;
+
+  // ---- Text layer: coverage pools in fibre valleys, soft edge, lit like paper ----
+  let text = textureSample(textTex, textSampler, uv);
+  let textCoverage = text.a;
+  let textAlpha = textCoverage * inkPool;
+  let textColour = vec3<f32>(0.102, 0.227, 0.361); // ballpoint blue-black #1a3a5c
+  let litText = textColour * lighting;
+  let outColour = coloured * (1.0 - textAlpha) + litText * inkPool;
   let outAlpha = 1.0;
 
   // ---- Edge vignette + soft page-edge rim (sheet thickness catches light) ----
