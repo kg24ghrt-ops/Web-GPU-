@@ -233,6 +233,7 @@ async function renderPage(page) {
       onInput: (text) => {
         notebook.setText(page.id, text);
         saveDebounced();
+        handleOverflow();
       },
       onOverflow: handleOverflow,
     }
@@ -246,24 +247,35 @@ async function renderPage(page) {
   currentPageId = page.id;
 }
 
+function overflowLinesFor(page) {
+  const t = getTemplate(page.paperType || settings.get('paper.type'));
+  const size = getPaperSize(t.paperSizeId);
+  const pageW = mmToPx(size.widthMm);
+  const pageH = mmToPx(size.heightMm);
+  const area = writingAreaRect(t, size, pageW, pageH);
+  const lineHeightPx = mmToPx(t.lineSpacingMm > 0 ? t.lineSpacingMm : 7.1);
+  const maxLines = Math.floor(area.h / lineHeightPx);
+  const text = notebook.getText(page.id);
+  const script = containsMyanmar(text) ? 'myanmar' : 'english';
+  const fontSpec = resolveFont(notebook.fontChoice(script), parseFloat(FONT_SIZE));
+  const { lines } = layoutText(text, fontSpec, area.w);
+  return { lines, maxLines, area, lineHeightPx, fontSpec };
+}
+
 function handleOverflow() {
   const page = notebook.currentPage();
   if (!page) return;
-  const next = notebook.createPage({ paperType: page.paperType || settings.get('paper.type') });
+  const { lines, maxLines } = overflowLinesFor(page);
+  if (maxLines <= 0 || lines.length <= maxLines) return; // nothing overflows
 
-  // Move text that does not fit on the current page to the new page.
-  const text = textEditor.text();
-  const maxLines = textEditor ? textEditor.maxLines() : 0;
-  if (maxLines > 0) {
-    const lines = text.split('\n');
-    if (lines.length > maxLines) {
-      const keepLines = lines.slice(0, maxLines);
-      const moveLines = lines.slice(maxLines);
-      notebook.setText(page.id, keepLines.join('\n'));
-      notebook.setText(next.id, moveLines.join('\n'));
-      saveDebounced();
-    }
-  }
+  // Move text that does not fit on the current page to the new page. The
+  // split is based on the wrapped lines from layoutText (not newline splits).
+  const next = notebook.createPage({ paperType: page.paperType || settings.get('paper.type') });
+  const keep = lines.slice(0, maxLines).map((l) => l.text).join('\n');
+  const move = lines.slice(maxLines).map((l) => l.text).join('\n');
+  notebook.setText(page.id, keep);
+  notebook.setText(next.id, move);
+  saveDebounced();
 
   renderPageList();
   renderPage(next).then(() => {

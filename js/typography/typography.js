@@ -213,7 +213,7 @@ function wrapHard(text, widthPx, font) {
   let i = 0;
   while (i < clusters.length) {
     const c = clusters[i];
-    const w = measure(c.text, font);
+    const w = measureText(c.text, font);
     const trialWidth = lineWidth + w;
     const isBreak = BREAK_CHARS.test(c.text);
     if (trialWidth <= widthPx || lineText === '') {
@@ -227,12 +227,14 @@ function wrapHard(text, widthPx, font) {
       i++;
     } else if (lastBreak > lineStart) {
       // Break at the last phrase/space opportunity.
-      lines.push({ text: lastBreakText, width: lastBreakWidth, start: lineStart, end: lastBreak });
-      lineStart = lastBreak;
+      const breakTarget = lastBreak;
+      lines.push({ text: lastBreakText, width: lastBreakWidth, start: lineStart, end: breakTarget });
+      lineStart = breakTarget;
       lineText = '';
       lineWidth = 0;
       lastBreak = -1;
-      // Re-process the current cluster on the fresh line.
+      // Re-process from the break target on the fresh line.
+      i = breakTarget;
     } else {
       // No break opportunity on this line: finalise it and start a new line
       // with the current cluster (breaks at grapheme boundaries only).
