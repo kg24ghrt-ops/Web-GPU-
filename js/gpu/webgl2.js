@@ -250,16 +250,15 @@ void main() {
 
   float ruleMix = min(lineAlpha + marginAlpha, 1.0);
   float hPaper = paper.a;
-  float ruleRelief = clamp(0.5 - hPaper * 1.5, 0.6, 1.0);
-  ruleMix = ruleMix * ruleRelief;
+  float ruleRelief = clamp(1.0 - hPaper * 1.5, 0.6, 1.0);
   vec3 lineColour = mix(u_lineColor.rgb, u_marginLineColor.rgb,
                         marginAlpha > lineAlpha ? 1.0 : 0.0);
   vec3 paperWithRule = mix(lit,
-    lit * (1.0 - 0.6 * ruleMix) + lineColour * (0.6 * ruleMix), ruleMix);
+    lit * (1.0 - 0.6 * ruleMix) + lineColour * (0.6 * ruleMix * ruleRelief), ruleMix);
 
   // Ink layer: ink pools in fibre valleys (low height) and skips high tooth.
   vec4 ink = sampleInk(uv);
-  float inkPool = clamp(0.5 - hPaper * 3.0, 0.0, 1.0);
+  float inkPool = mix(0.85, 1.0, clamp(0.5 - hPaper * 3.0, 0.0, 1.0));
   float inkAlpha = ink.a * inkPool;
   vec3 outColour = paperWithRule * (1.0 - inkAlpha) + ink.rgb * inkPool;
   float outAlpha = 1.0;
@@ -271,7 +270,7 @@ void main() {
   float edgeRim = 1.0 - smoothstep(0.0, 0.05, edgeDist);
   float edgeGlow = edgeRim * 0.05;
   float curlDir = (uv.x - 0.5) + (uv.y - 0.5);
-  float curlShade = edgeRim * curlDir * 0.07;
+  float curlShade = edgeRim * curlDir * 0.015;
   outColour *= vignette * (1.0 + edgeGlow + curlShade);
 
   fragColor = vec4(outColour, outAlpha);

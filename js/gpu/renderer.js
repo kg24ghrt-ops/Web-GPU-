@@ -49,7 +49,7 @@ export const DEFAULT_RULING = {
   marginMm: 25,
   topMarginMm: 25,
   lightDir: [0.6, -0.8, 1.0],
-  ambient: 0.6,
+  ambient: 0.82,
 };
 
 function loadWgsl(name) {

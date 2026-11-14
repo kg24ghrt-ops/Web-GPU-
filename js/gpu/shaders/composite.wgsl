@@ -139,22 +139,23 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
 
   // ---- Ruling printed on the surface: height modulates line strength ----
   let h = sampleHeight(uv);
-  let ruleRelief = clamp(0.5 - h * 1.5, 0.6, 1.0);
-  let ruleMix = min(lineAlpha + marginAlpha, 1.0) * ruleRelief;
+  let ruleRelief = clamp(1.0 - h * 1.5, 0.6, 1.0);
+  let ruleMix = min(lineAlpha + marginAlpha, 1.0);
   let lineColour = mix(
     vec3<f32>(uniforms.lineColorR, uniforms.lineColorG, uniforms.lineColorB),
     vec3<f32>(uniforms.marginLineColorR, uniforms.marginLineColorG, uniforms.marginLineColorB),
     select(0.0, 1.0, marginAlpha > lineAlpha)
   );
+  // Apply the relief once: modulate line colour strength by surface height.
   let paperWithRule = mix(
     lit,
-    lit * (1.0 - 0.6 * ruleMix) + lineColour * (0.6 * ruleMix),
+    lit * (1.0 - 0.6 * ruleMix) + lineColour * (0.6 * ruleMix * ruleRelief),
     ruleMix
   );
 
-  // ---- Ink layer: ink pools in fibre valleys (low height) and skips high tooth ----
+  // ---- Ink layer: ink pools in fibre valleys and skips high tooth ----
   let ink = textureSample(inkTex, inkSampler, uv);
-  let inkPool = clamp(0.5 - h * 3.0, 0.0, 1.0);
+  let inkPool = mix(0.85, 1.0, clamp(0.5 - h * 3.0, 0.0, 1.0));
   let inkAlpha = ink.a * inkPool;
   let outColour = paperWithRule * (1.0 - inkAlpha) + ink.rgb * inkPool;
   let outAlpha = 1.0;
@@ -168,7 +169,7 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
   // Edge curl: directional shade across the outer edge so one corner lifts
   // (catching light) and the opposite casts a shadow.
   let curlDir = (uv.x - 0.5) + (uv.y - 0.5);
-  let curlShade = edgeRim * curlDir * 0.07;
+  let curlShade = edgeRim * curlDir * 0.015;
   let outColourVignette = outColour * vignette * (1.0 + edgeGlow + curlShade);
 
   return vec4<f32>(outColourVignette, outAlpha);
