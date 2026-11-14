@@ -41,7 +41,7 @@ export const PEN_MATERIALS = {
   },
 };
 
-const DEFAULT_RULING = {
+export const DEFAULT_RULING = {
   lineSpacingMm: 8.0,
   lineWidthMm: 0.5,
   lineColor: [0.55, 0.68, 0.86, 0.75],   // blue-grey
@@ -203,22 +203,30 @@ export class WebGpuRenderer {
       return;
     }
 
-    this._ctx = this._canvas.getContext('webgpu');
+    console.info('[gpu] adapter ok');
+    console.info('[gpu] device ok');
+
     const canvasFormat = this._report?.preferredCanvasFormat || 'rgba8unorm';
     this._canvasFormat = canvasFormat;
-    this._ctx.configure({
-      device,
-      format: canvasFormat,
-      alphaMode: 'premultiplied',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT,
-    });
 
     try {
       await this._createPipelines(device, canvasFormat);
+      console.info('[gpu] shaders loaded');
+      console.info('[gpu] pipelines ok');
       this._createSamplers(device);
       this._createUniformBuffer(device);
       this._createdResourcesForSize(device, this._pageW || 1, this._pageH || 1);
+
+      this._ctx = this._canvas.getContext('webgpu');
+      this._ctx.configure({
+        device,
+        format: canvasFormat,
+        alphaMode: 'premultiplied',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      console.info('[gpu] context configured');
     } catch (err) {
+      console.error('[gpu] init failed', err);
       this._report.available = false;
       this._report.reason = 'initialization failed: ' + (err && (err.message || String(err)));
       this._lost = true;
@@ -470,20 +478,20 @@ export class WebGpuRenderer {
     const perStroke = [];
     for (const s of this._strokes) {
       const g = buildStrokeGeometry(s);
-      perStroke.push({ geometry: g, count: g.length / 10 });
-      total += g.length / 10;
+      perStroke.push({ geometry: g, count: g.length / 9 });
+      total += g.length / 9;
     }
     this._strokeVertexCount = total;
 
-    if (!this._strokeBuffer || this._strokeBuffer.size < total * 40) {
+    if (!this._strokeBuffer || this._strokeBuffer.size < total * 36) {
       if (this._strokeBuffer) this._strokeBuffer.destroy();
       this._strokeBuffer = device.createBuffer({
-        size: Math.max(4096, total * 40),
+        size: Math.max(4096, total * 36),
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       });
     }
     if (total > 0) {
-      const data = new Float32Array(total * 10);
+      const data = new Float32Array(total * 9);
       let o = 0;
       for (const ps of perStroke) {
         data.set(ps.geometry, o);
@@ -677,19 +685,19 @@ export class WebGpuRenderer {
     for (const s of strokes) {
       const g = buildStrokeGeometry(s);
       parts.push(g);
-      total += g.length / 10;
+      total += g.length / 9;
     }
     let count = total;
     let buffer = this._strokeBuffer;
-    if (!buffer || buffer.size < total * 40) {
+    if (!buffer || buffer.size < total * 36) {
       if (buffer) buffer.destroy();
       buffer = device.createBuffer({
-        size: Math.max(4096, total * 40),
+        size: Math.max(4096, total * 36),
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       });
     }
     if (total > 0) {
-      const data = new Float32Array(total * 10);
+      const data = new Float32Array(total * 9);
       let o = 0;
       for (const g of parts) { data.set(g, o); o += g.length; }
       device.queue.writeBuffer(buffer, 0, data);

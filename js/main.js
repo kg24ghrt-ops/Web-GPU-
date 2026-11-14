@@ -225,6 +225,7 @@ async function load() {
   try {
     webgpuOk = await initRenderer();
   } catch (err) {
+    console.error('[gpu] initRenderer failed', err);
     const e = wrap(err, { module: 'gpu', operation: 'initRenderer', retryable: true });
     logger.error('gpu', 'initRenderer', e.toJSON());
     setStatus('WebGPU initialization failed: ' + (e.cause || e.message), { error: true });
