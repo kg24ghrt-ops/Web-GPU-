@@ -20,7 +20,7 @@ main { display: flex; flex: 1; padding: 16px; gap: 16px; box-sizing: border-box;
 .page-view { flex: 1; min-width: 0; position: relative; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; overflow: auto; padding-top: 16px; }
 
 /* Physical paper sheet — true mm dimensions, centered on the desk */
-.page { position: relative; width: fit-content; height: fit-content; background: #ffffff; display: flex; align-items: center; justify-content: center; box-shadow: 0 24px 48px -12px rgba(0,0,0,0.20); border-radius: 6px; isolation: isolate; margin: 0 auto 24px auto; }
+.page { position: relative; width: fit-content; height: fit-content; background: #ffffff; display: flex; align-items: center; justify-content: center; box-shadow: 0 30px 60px -16px rgba(0,0,0,0.24); border-radius: 6px; isolation: isolate; margin: 0 auto 24px auto; }
 .page__paper { position: absolute; top: 0; left: 0; z-index: 0; display: block; }
 .page__handwriting { position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; touch-action: none; }
 .page__canvas { position: absolute; top: 0; left: 0; z-index: 0; width: 100%; height: 100%; display: block; background: #fdfbf7; }

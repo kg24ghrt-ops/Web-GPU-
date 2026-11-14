@@ -137,8 +137,10 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
   let marginHalf = uniforms.marginLineWidthPx * 0.5;
   let marginAlpha = 1.0 - smoothstep(marginHalf - 0.4, marginHalf + 0.4, marginDist);
 
-  // ---- Composite ruling over lit paper ----
-  let ruleMix = min(lineAlpha + marginAlpha, 1.0);
+  // ---- Ruling printed on the surface: height modulates line strength ----
+  let h = sampleHeight(uv);
+  let ruleRelief = clamp(0.5 - h * 1.5, 0.6, 1.0);
+  let ruleMix = min(lineAlpha + marginAlpha, 1.0) * ruleRelief;
   let lineColour = mix(
     vec3<f32>(uniforms.lineColorR, uniforms.lineColorG, uniforms.lineColorB),
     vec3<f32>(uniforms.marginLineColorR, uniforms.marginLineColorG, uniforms.marginLineColorB),
@@ -150,15 +152,24 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
     ruleMix
   );
 
-  // ---- Ink layer: premultiplied alpha over paper ----
+  // ---- Ink layer: ink pools in fibre valleys (low height) and skips high tooth ----
   let ink = textureSample(inkTex, inkSampler, uv);
-  let outColour = paperWithRule * (1.0 - ink.a) + ink.rgb;
+  let inkPool = clamp(0.5 - h * 3.0, 0.0, 1.0);
+  let inkAlpha = ink.a * inkPool;
+  let outColour = paperWithRule * (1.0 - inkAlpha) + ink.rgb * inkPool;
   let outAlpha = 1.0;
 
-  // ---- Edge vignette: subtle darkening toward page edges for realism ----
+  // ---- Edge vignette + soft page-edge rim (sheet thickness catches light) ----
   let d = distance(uv, vec2<f32>(0.5, 0.5));
   let vignette = 1.0 - smoothstep(0.55, 0.85, d) * 0.06;
-  let outColourVignette = outColour * vignette;
+  let edgeDist = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+  let edgeRim = 1.0 - smoothstep(0.0, 0.05, edgeDist);
+  let edgeGlow = edgeRim * 0.05;
+  // Edge curl: directional shade across the outer edge so one corner lifts
+  // (catching light) and the opposite casts a shadow.
+  let curlDir = (uv.x - 0.5) + (uv.y - 0.5);
+  let curlShade = edgeRim * curlDir * 0.07;
+  let outColourVignette = outColour * vignette * (1.0 + edgeGlow + curlShade);
 
   return vec4<f32>(outColourVignette, outAlpha);
 }

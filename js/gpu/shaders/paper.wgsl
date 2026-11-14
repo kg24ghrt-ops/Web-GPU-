@@ -134,11 +134,11 @@ fn mainCs(@builtin(global_invocation_id) id: vec3<u32>) {
   // Large-scale crease / fold structure (ridged multifractal).
   let crease = ridged2(uv * 2.0 + s + 6000.0, 4);
   // Mid-scale fibre-driven depressions.
-  let fibreHeight = 0.06 * fbm2(uv * 6.0 + s + 400.0, 5)
-                 + 0.02 * fbm2(uv * 30.0 + s + 500.0, 3);
+  let fibreHeight = 0.09 * fbm2(uv * 6.0 + s + 400.0, 5)
+                 + 0.03 * fbm2(uv * 30.0 + s + 500.0, 3);
   // Fine tooth bumps.
-  let toothHeight = 0.008 * tooth;
-  let height = 0.03 * crease + fibreHeight - 0.015 * fibreMask + toothHeight;
+  let toothHeight = 0.012 * tooth;
+  let height = 0.03 * crease + fibreHeight - 0.02 * fibreMask + toothHeight;
 
   // ---- Output colour with fibre masking, grain and staining ----
   let grain = fbm2(uv * 90.0 + s + 300.0, 2);

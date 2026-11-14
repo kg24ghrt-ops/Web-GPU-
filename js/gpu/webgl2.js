@@ -106,10 +106,10 @@ void main() {
 
   // Surface height field.
   float crease = ridged2(uv * 2.0 + s + 6000.0, 4);
-  float fibreHeight = 0.06 * fbm2(uv * 6.0 + s + 400.0, 5)
-                   + 0.02 * fbm2(uv * 30.0 + s + 500.0, 3);
-  float toothHeight = 0.008 * tooth;
-  float height = 0.03 * crease + fibreHeight - 0.015 * fibreMask + toothHeight;
+  float fibreHeight = 0.085 * fbm2(uv * 6.0 + s + 400.0, 5)
+                   + 0.03 * fbm2(uv * 30.0 + s + 500.0, 3);
+  float toothHeight = 0.012 * tooth;
+  float height = 0.03 * crease + fibreHeight - 0.02 * fibreMask + toothHeight;
 
   // Output colour.
   float grain = fbm2(uv * 90.0 + s + 300.0, 2);
@@ -249,20 +249,30 @@ void main() {
   float marginAlpha = 1.0 - smoothstep(marginHalf - 0.4, marginHalf + 0.4, marginDist);
 
   float ruleMix = min(lineAlpha + marginAlpha, 1.0);
+  float hPaper = paper.a;
+  float ruleRelief = clamp(0.5 - hPaper * 1.5, 0.6, 1.0);
+  ruleMix = ruleMix * ruleRelief;
   vec3 lineColour = mix(u_lineColor.rgb, u_marginLineColor.rgb,
                         marginAlpha > lineAlpha ? 1.0 : 0.0);
   vec3 paperWithRule = mix(lit,
     lit * (1.0 - 0.6 * ruleMix) + lineColour * (0.6 * ruleMix), ruleMix);
 
-  // Ink layer.
+  // Ink layer: ink pools in fibre valleys (low height) and skips high tooth.
   vec4 ink = sampleInk(uv);
-  vec3 outColour = paperWithRule * (1.0 - ink.a) + ink.rgb;
+  float inkPool = clamp(0.5 - hPaper * 3.0, 0.0, 1.0);
+  float inkAlpha = ink.a * inkPool;
+  vec3 outColour = paperWithRule * (1.0 - inkAlpha) + ink.rgb * inkPool;
   float outAlpha = 1.0;
 
-  // Edge vignette.
+  // Edge vignette + thickness rim + directional curl.
   float d = distance(uv, vec2(0.5, 0.5));
   float vignette = 1.0 - smoothstep(0.55, 0.85, d) * 0.06;
-  outColour *= vignette;
+  float edgeDist = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+  float edgeRim = 1.0 - smoothstep(0.0, 0.05, edgeDist);
+  float edgeGlow = edgeRim * 0.05;
+  float curlDir = (uv.x - 0.5) + (uv.y - 0.5);
+  float curlShade = edgeRim * curlDir * 0.07;
+  outColour *= vignette * (1.0 + edgeGlow + curlShade);
 
   fragColor = vec4(outColour, outAlpha);
 }`;
