@@ -151,9 +151,9 @@ function writingAreaRect(template, paperSize, pageW, pageH) {
   const bottomPx = mmToPx(template.bottomMarginMm);
   const bindingPx = mmToPx(template.bindingMarginMm || 0);
   return {
-    x: marginPx + bindingPx,
+    x: marginPx + bindingPx + mmToPx(3),
     y: topPx,
-    w: pageW - marginPx - mmToPx(template.marginMm) - bindingPx,
+    w: pageW - marginPx - mmToPx(template.marginMm) - bindingPx - mmToPx(3),
     h: pageH - topPx - bottomPx,
   };
 }
@@ -255,6 +255,11 @@ async function renderPage(page) {
     {
       onInput: (text) => {
         notebook.setText(page.id, text);
+        if (currentText) {
+          currentText.text = text;
+          const sc = containsMyanmar(text) ? 'myanmar' : 'english';
+          currentText.fontSpec = resolveFont(notebook.fontChoice(sc), parseFloat(FONT_SIZE));
+        }
         saveDebounced();
         handleOverflow();
         if (textEditor) currentText.caretOffset = textEditor.caretOffset();

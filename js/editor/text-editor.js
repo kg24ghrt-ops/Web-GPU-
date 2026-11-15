@@ -27,6 +27,27 @@
 import { mmToPx, snapPx } from '../units.js';
 
 /**
+ * Extract plain text from a contentEditable element, converting structural
+ * elements (BR, DIV, P) into newline characters so the returned string
+ * matches what layoutText expects.
+ * @param {HTMLElement} el
+ * @returns {string}
+ */
+function domText(el) {
+  let out = '';
+  for (const node of el.childNodes) {
+    if (node.nodeType === 3) {
+      out += node.textContent;
+    } else if (node.nodeType === 1) {
+      if (node.tagName === 'BR') out += '\n';
+      else if (node.tagName === 'DIV' || node.tagName === 'P') out += '\n';
+      out += domText(node);
+    }
+  }
+  return out;
+}
+
+/**
  * Editor configuration.
  * @typedef {Object} EditorConfig
  * @property {number} writeWidthPx - Writing area width in CSS px
@@ -150,7 +171,7 @@ export class TextEditor {
    */
   text(value) {
     if (arguments.length === 0) {
-      return this._el ? this._el.textContent : '';
+      return this._el ? domText(this._el) : '';
     }
     if (this._el) {
       this._el.textContent = value;
@@ -175,27 +196,32 @@ export class TextEditor {
   caretOffset() {
     if (!this._el) return 0;
     const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
-    if (!sel || sel.rangeCount === 0) return this._el.textContent.length;
+    if (!sel || sel.rangeCount === 0) return domText(this._el).length;
     const range = sel.getRangeAt(0);
     const container = range.startContainer;
-    if (!container || !this._el.contains(container)) return this._el.textContent.length;
+    if (!container || !this._el.contains(container)) return domText(this._el).length;
     let offset = 0;
     let hit = false;
     const walk = (node) => {
       if (hit) return;
       if (node === container) {
-        offset += range.startOffset;
+        if (node.nodeType === Node.TEXT_NODE) {
+          offset += range.startOffset;
+        }
         hit = true;
         return;
       }
-      if (node.nodeType === Node.TEXT_NODE) {
+      if (node.nodeType === 3) {
         offset += node.textContent.length;
-      } else {
+      } else if (node.nodeType === 1) {
+        if (node.tagName === 'BR' || node.tagName === 'DIV' || node.tagName === 'P') {
+          offset += 1;
+        }
         for (const child of node.childNodes) walk(child);
       }
     };
     for (const child of this._el.childNodes) walk(child);
-    return hit ? offset : this._el.textContent.length;
+    return hit ? offset : domText(this._el).length;
   }
 
   /**
@@ -275,7 +301,7 @@ export class TextEditor {
 
   _onInput() {
     if (this._callbacks.onInput) {
-      this._callbacks.onInput(this._el.textContent);
+      this._callbacks.onInput(domText(this._el));
     }
   }
 

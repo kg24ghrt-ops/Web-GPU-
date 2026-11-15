@@ -597,7 +597,9 @@ export class WebGL2Renderer {
     if (this._textDirty && this._textImage) {
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, this._textTex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this._textImage);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
       gl.bindTexture(gl.TEXTURE_2D, null);
       this._textDirty = false;
     }
@@ -729,7 +731,9 @@ export class WebGL2Renderer {
       if (this._textDirty && this._textImage) {
         gl.activeTexture(gl.TEXTURE2);
         gl.bindTexture(gl.TEXTURE_2D, this._textTex);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this._textImage);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
         gl.bindTexture(gl.TEXTURE_2D, null);
         this._textDirty = false;
       }
