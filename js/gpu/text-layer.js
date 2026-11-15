@@ -24,8 +24,8 @@ import { PEN_MATERIALS } from './renderer.js';
 export const TEXT_INK_COLOR = PEN_MATERIALS.ballpoint.color; // '#1a3a5c'
 
 /**
- * Tiny deterministic hash from a position → 0..1, used for per-glyph density
- * variation so repeated letters are not identical.
+ * Tiny deterministic hash from a position → 0..1, used for per-glyph variation
+ * so repeated letters are not identical and redraws are stable.
  */
 function glyphHash(x, y, i) {
   let h = (Math.floor(x) * 7391 + Math.floor(y) * 193 + i * 9773) | 0;
@@ -36,8 +36,24 @@ function glyphHash(x, y, i) {
 }
 
 /** Density range for per-glyph variation (kept subtle). */
-const GLYPH_DENSITY_MIN = 0.93;
+const GLYPH_DENSITY_MIN = 0.90;
 const GLYPH_DENSITY_MAX = 1.00;
+
+/** Baseline drift range per glyph (px), varying slowly along the row. */
+const BASELINE_DRIFT_MIN = 0.3;
+const BASELINE_DRIFT_MAX = 0.8;
+
+/** Slant range per glyph (degrees). */
+const SLANT_MIN = -1.0;
+const SLANT_MAX = 1.0;
+
+/** Size jitter range per glyph (fraction of nominal size). */
+const SIZE_MIN = 0.97;
+const SIZE_MAX = 1.03;
+
+/** Pressure range per glyph (fraction of nominal opacity). */
+const PRESSURE_MIN = 0.85;
+const PRESSURE_MAX = 1.00;
 
 /**
  * Create an offscreen canvas for the text layer at the given CSS px size.
@@ -77,14 +93,31 @@ function drawRun(ctx, text, x, y, clusters, startIdx, endIdx, myanmar, clusterId
     return { x: x + gw, clusterIdx: clusterIdx + (endIdx - startIdx) };
   }
 
-  // Latin: draw cluster-by-cluster for per-glyph density variation.
+  // Latin: draw cluster-by-cluster with realistic handwriting variation:
+  // baseline drift, slant, size jitter, and pressure (opacity) per glyph.
+  const fontSizePx = parseFloat(ctx.font) || 18;
   for (let j = startIdx; j < endIdx; j++) {
     const c = clusters[j];
-    const density = GLYPH_DENSITY_MIN + glyphHash(x, y, clusterIdx) * (GLYPH_DENSITY_MAX - GLYPH_DENSITY_MIN);
     const gw = ctx.measureText(c.text).width;
-    ctx.globalAlpha = density;
-    ctx.fillText(c.text, x, y);
-    ctx.globalAlpha = 1.0;
+
+    // Seeded per-glyph variation, stable across redraws.
+    const density = GLYPH_DENSITY_MIN + glyphHash(x, y, clusterIdx) * (GLYPH_DENSITY_MAX - GLYPH_DENSITY_MIN);
+    const drift = BASELINE_DRIFT_MIN + glyphHash(x + 1, y + 7, clusterIdx) * (BASELINE_DRIFT_MAX - BASELINE_DRIFT_MIN);
+    const slantDeg = SLANT_MIN + glyphHash(x + 2, y + 13, clusterIdx) * (SLANT_MAX - SLANT_MIN);
+    const size = SIZE_MIN + glyphHash(x + 3, y + 19, clusterIdx) * (SIZE_MAX - SIZE_MIN);
+    const pressure = PRESSURE_MIN + glyphHash(x + 4, y + 25, clusterIdx) * (PRESSURE_MAX - PRESSURE_MIN);
+
+    const glyphY = y + drift;
+    const slantRad = (slantDeg * Math.PI) / 180.0;
+
+    ctx.save();
+    ctx.translate(x, glyphY);
+    ctx.rotate(slantRad);
+    ctx.scale(size, size);
+    ctx.globalAlpha = density * pressure;
+    ctx.fillText(c.text, 0, 0);
+    ctx.restore();
+
     x += gw;
     clusterIdx++;
   }
@@ -132,7 +165,7 @@ export function rasterizeText(canvas, text, fontSpec, widthPx, lineHeightPx, ori
       const cMy = isMyanmarCluster(clusters[j].text);
       if (cMy !== runIsMy) {
         // End current run, start a new one.
-        const res = drawRun(line.text, x, y, clusters, runStart, j, runIsMy, clusterIdx);
+        const res = drawRun(ctx, line.text, x, y, clusters, runStart, j, runIsMy, clusterIdx);
         x = res.x;
         clusterIdx = res.clusterIdx;
         runStart = j;
@@ -141,7 +174,7 @@ export function rasterizeText(canvas, text, fontSpec, widthPx, lineHeightPx, ori
     }
     // Draw the final run.
     if (clusters.length > 0) {
-      const res = drawRun(line.text, x, y, clusters, runStart, clusters.length, runIsMy, clusterIdx);
+      const res = drawRun(ctx, line.text, x, y, clusters, runStart, clusters.length, runIsMy, clusterIdx);
       x = res.x;
     }
 

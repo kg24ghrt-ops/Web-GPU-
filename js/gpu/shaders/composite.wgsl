@@ -157,7 +157,7 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
 
   // ---- Ink layer: ink pools in fibre valleys and skips high tooth ----
   let ink = textureSample(inkTex, inkSampler, uv);
-  let inkPool = mix(0.85, 1.0, clamp(0.5 - h * 3.0, 0.0, 1.0));
+  let inkPool = mix(0.70, 1.0, clamp(0.25 - h * 4.0, 0.0, 1.0));
   let inkAlpha = ink.a * inkPool;
   let coloured = paperWithRule * (1.0 - inkAlpha) + ink.rgb * inkPool;
 
@@ -165,13 +165,13 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
   let text = textureSample(textTex, textSampler, uv);
   var textCoverage = text.a;
   // Slight ink bleed/spread (~0.4px) at glyph edges for a soft pen-like halo.
-  var step = vec2<f32>(1.0) / dims();
+  var bleedStep = vec2<f32>(1.0) / dims();
   var bleed = max(text.a,
-    max(textureSample(textTex, textSampler, uv + vec2<f32>( step.x, 0.0)).a,
-        textureSample(textTex, textSampler, uv + vec2<f32>(-step.x, 0.0)).a));
+    max(textureSample(textTex, textSampler, uv + vec2<f32>( bleedStep.x, 0.0)).a,
+        textureSample(textTex, textSampler, uv + vec2<f32>(-bleedStep.x, 0.0)).a));
   bleed = max(bleed,
-    max(textureSample(textTex, textSampler, uv + vec2<f32>(0.0,  step.y)).a,
-        textureSample(textTex, textSampler, uv + vec2<f32>(0.0, -step.y)).a));
+    max(textureSample(textTex, textSampler, uv + vec2<f32>(0.0,  bleedStep.y)).a,
+        textureSample(textTex, textSampler, uv + vec2<f32>(0.0, -bleedStep.y)).a));
   textCoverage = max(textCoverage, bleed * 0.35);
   let textAlpha = textCoverage * inkPool;
   let textColour = vec3<f32>(0.102, 0.227, 0.361); // ballpoint blue-black #1a3a5c

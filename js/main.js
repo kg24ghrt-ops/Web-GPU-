@@ -150,10 +150,13 @@ function writingAreaRect(template, paperSize, pageW, pageH) {
   const topPx = mmToPx(template.topMarginMm);
   const bottomPx = mmToPx(template.bottomMarginMm);
   const bindingPx = mmToPx(template.bindingMarginMm || 0);
+  const leftX = marginPx + bindingPx + mmToPx(3);
   return {
-    x: marginPx + bindingPx + mmToPx(3),
+    x: leftX,
     y: topPx,
-    w: pageW - marginPx - mmToPx(template.marginMm) - bindingPx - mmToPx(3),
+    // Writable width runs from the left writing edge to the page's right edge,
+    // minus about 3 mm (right buffer). Do not subtract the left margin twice.
+    w: pageW - leftX - mmToPx(3),
     h: pageH - topPx - bottomPx,
   };
 }
@@ -231,6 +234,7 @@ async function renderPage(page) {
   // --- GPU text layer: rasterize wrapped text to an offscreen canvas -------
   stopBlink();
   textCanvas = createTextCanvas(pageW, pageH);
+  const layout = layoutText(pageText, fontSpec, area.w);
   const caretOffset = 0;
   const caretPos = caretAt(pageText, fontSpec, area.w, lineHeightPx, area.x, area.y, caretOffset);
   rasterizeText(textCanvas, pageText, fontSpec, area.w, lineHeightPx, area.x, area.y,
@@ -238,7 +242,7 @@ async function renderPage(page) {
   renderer.setTextImage(textCanvas);
   currentText = {
     text: pageText, fontSpec, widthPx: area.w, lineHeightPx,
-    originX: area.x, originY: area.y, caretOffset,
+    originX: area.x, originY: area.y, caretOffset, lines: layout.lines,
   };
 
   renderer.setDocument({
@@ -251,6 +255,38 @@ async function renderPage(page) {
   });
   renderer.setStrokes(strokes);
   await renderer.render();
+
+  // Tap/click snaps the caret to the nearest ruled row (no logging).
+  pageEl.addEventListener('click', (e) => {
+    if (!currentText || !textEditor) return;
+    const r = pageEl.getBoundingClientRect();
+    const py = e.clientY - r.top;
+    const rowIdx = Math.round((py - currentText.originY) / currentText.lineHeightPx);
+    const clamped = Math.max(0, Math.min(rowIdx, currentText.lines.length - 1));
+    const targetOffset = currentText.lines[clamped].start;
+    const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
+    if (!sel) return;
+    // Walk text nodes to find the character offset targetOffset.
+    let offset = 0;
+    let done = false;
+    const walk = (node) => {
+      if (done) return;
+      if (node.nodeType === 3) {
+        const next = offset + node.textContent.length;
+        if (targetOffset <= next) {
+          sel.setBaseAndExtent(node, targetOffset - offset, node, targetOffset - offset);
+          done = true;
+          return;
+        }
+        offset = next;
+      } else if (node.nodeType === 1) {
+        for (const child of node.childNodes) walk(child);
+      }
+    };
+    for (const child of textEditor._el.childNodes) walk(child);
+    if (!done) sel.setBaseAndExtent(textEditor._el, textEditor._el.childNodes.length, textEditor._el, textEditor._el.childNodes.length);
+  });
+
   startBlink();
 
   textEditor = new TextEditor(
@@ -271,6 +307,7 @@ async function renderPage(page) {
           currentText.text = text;
           const sc = containsMyanmar(text) ? 'myanmar' : 'english';
           currentText.fontSpec = resolveFont(notebook.fontChoice(sc), parseFloat(FONT_SIZE));
+          currentText.lines = layoutText(text, currentText.fontSpec, currentText.widthPx).lines;
         }
         saveDebounced();
         handleOverflow();
@@ -410,6 +447,10 @@ async function load() {
 
 async function newPage() {
   const page = notebook.createPage({ paperType: templateSelect.value || settings.get('paper.type') });
+  // Switch to the new page so it becomes current (add() only sets _currentId
+  // when the manager is empty).
+  notebook.switchPage(page.id);
+  currentPageId = page.id;
   renderPageList();
   await renderPage(page);
   saveDebounced();

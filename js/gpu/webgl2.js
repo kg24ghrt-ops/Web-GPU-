@@ -257,7 +257,7 @@ void main() {
 
   // Ink layer: ink pools in fibre valleys (low height) and skips high tooth.
   vec4 ink = sampleInk(uv);
-  float inkPool = mix(0.85, 1.0, clamp(0.5 - hPaper * 3.0, 0.0, 1.0));
+  float inkPool = mix(0.70, 1.0, clamp(0.25 - hPaper * 4.0, 0.0, 1.0));
   float inkAlpha = ink.a * inkPool;
   vec3 coloured = paperWithRule * (1.0 - inkAlpha) + ink.rgb * inkPool;
 
@@ -265,13 +265,13 @@ void main() {
   vec4 text = texture(u_textTex, clamp(uv, 0.0, 1.0));
   float textCoverage = text.a;
   // Slight ink bleed/spread (~0.4px) at glyph edges for a soft pen-like halo.
-  vec2 step = vec2(1.0 / u_resolution.x, 1.0 / u_resolution.y);
+  vec2 bleedStep = vec2(1.0 / u_resolution.x, 1.0 / u_resolution.y);
   float bleed = max(text.a,
-    max(texture(u_textTex, clamp(uv + vec2(step.x, 0.0), 0.0, 1.0)).a,
-        texture(u_textTex, clamp(uv + vec2(-step.x, 0.0), 0.0, 1.0)).a));
+    max(texture(u_textTex, clamp(uv + vec2(bleedStep.x, 0.0), 0.0, 1.0)).a,
+        texture(u_textTex, clamp(uv + vec2(-bleedStep.x, 0.0), 0.0, 1.0)).a));
   bleed = max(bleed,
-    max(texture(u_textTex, clamp(uv + vec2(0.0, step.y), 0.0, 1.0)).a,
-        texture(u_textTex, clamp(uv + vec2(0.0, -step.y), 0.0, 1.0)).a));
+    max(texture(u_textTex, clamp(uv + vec2(0.0, bleedStep.y), 0.0, 1.0)).a,
+        texture(u_textTex, clamp(uv + vec2(0.0, -bleedStep.y), 0.0, 1.0)).a));
   textCoverage = max(textCoverage, bleed * 0.35);
   float textAlpha = textCoverage * inkPool;
   vec3 textColour = vec3(0.102, 0.227, 0.361); // ballpoint blue-black #1a3a5c
