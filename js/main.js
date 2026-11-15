@@ -162,15 +162,18 @@ async function initRenderer() {
   gpuCanvas = document.createElement('canvas');
   gpuCanvas.className = 'page__canvas';
 
-  // Try WebGPU first. If it throws (not just reports unavailable), we still
-  // want to fall back to WebGL2 so the notebook still renders on devices
-  // that lack WebGPU or run in a non-secure context.
+  // Try WebGPU first, with a 3-second timeout so a hung adapter/device
+  // request falls back to WebGL2 instead of freezing the page.
+  const webGPUTimeout = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('WebGPU setup timed out')), 3000);
+  });
+
   try {
     renderer = new WebGpuRenderer({
       canvas: gpuCanvas,
       onStatus: (msg) => setStatus(msg),
     });
-    await renderer.init();
+    await Promise.race([renderer.init(), webGPUTimeout]);
     if (renderer.available) return true;
   } catch (err) {
     console.error('[gpu] WebGPU init failed', err);

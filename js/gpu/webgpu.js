@@ -63,9 +63,7 @@ export async function detectCapabilities() {
     return report;
   }
   try {
-    const adapter = await navigator.gpu.requestAdapter({
-      powerPreference: 'high-performance',
-    });
+    const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) {
       report.reason = 'no WebGPU adapter available';
       logger.warn('gpu', 'No WebGPU adapter');
