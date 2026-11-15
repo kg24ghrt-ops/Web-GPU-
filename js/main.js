@@ -161,12 +161,21 @@ function writingAreaRect(template, paperSize, pageW, pageH) {
 async function initRenderer() {
   gpuCanvas = document.createElement('canvas');
   gpuCanvas.className = 'page__canvas';
-  renderer = new WebGpuRenderer({
-    canvas: gpuCanvas,
-    onStatus: (msg) => setStatus(msg),
-  });
-  await renderer.init();
-  if (renderer.available) return true;
+
+  // Try WebGPU first. If it throws (not just reports unavailable), we still
+  // want to fall back to WebGL2 so the notebook still renders on devices
+  // that lack WebGPU or run in a non-secure context.
+  try {
+    renderer = new WebGpuRenderer({
+      canvas: gpuCanvas,
+      onStatus: (msg) => setStatus(msg),
+    });
+    await renderer.init();
+    if (renderer.available) return true;
+  } catch (err) {
+    console.error('[gpu] WebGPU init failed', err);
+    try { renderer.destroy(); } catch { /* ignore */ }
+  }
 
   // WebGPU unavailable on this device (e.g. Android / Mali). Fall back to
   // WebGL 2.0 so the notebook still renders.
