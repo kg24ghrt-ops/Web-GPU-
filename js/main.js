@@ -371,22 +371,29 @@ async function load() {
   if (fontSelectMy) fontSelectMy.value = notebook.fontChoice('myanmar');
   await loadFonts(notebook.fontSettings);
   let webgpuOk = false;
+  let webgl2Fallback = false;
   try {
     webgpuOk = await initRenderer();
+    // If WebGPU itself isn't available but initRenderer returned true,
+    // we fell back to WebGL2.
+    if (webgpuOk && renderer && renderer.constructor.name === 'WebGL2Renderer') {
+      webgl2Fallback = true;
+    }
   } catch (err) {
     console.error('[gpu] initRenderer failed', err);
     const e = wrap(err, { module: 'gpu', operation: 'initRenderer', retryable: true });
     logger.error('gpu', 'initRenderer', e.toJSON());
-    setStatus('WebGPU initialization failed: ' + (e.cause || e.message), { error: true });
+    setStatus('GPU initialization failed: ' + (e.cause || e.message), { error: true });
   }
   if (!webgpuOk) {
-    setStatus('WebGPU unavailable on this device', { error: true });
+    setStatus('WebGPU and WebGL2 both unavailable on this device', { error: true });
+  } else if (webgl2Fallback) {
+    setStatus('WebGPU unavailable (secure context required); using WebGL2 fallback');
+  } else {
+    setStatus('Ready');
   }
   setMode(settings.get('ui.mode'));
   await renderPage(notebook.currentPage());
-  if (webgpuOk) {
-    setStatus('Ready');
-  }
 }
 
 async function newPage() {
