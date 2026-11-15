@@ -219,15 +219,15 @@ void main() {
   float h0 = samplePaper(uv).a;
   float ao = 0.0;
   float weight = 1.0;
-  float step = 1.0;
+  float aoStep = 1.0;
   for (int i = 0; i < 4; i++) {
     float angle = float(i) * 1.5708;
     vec2 dir = vec2(cos(angle), sin(angle));
-    vec2 p = uv + dir * step * vec2(1.0 / u_resolution.x, 1.0 / u_resolution.y);
+    vec2 p = uv + dir * aoStep * vec2(1.0 / u_resolution.x, 1.0 / u_resolution.y);
     float hd = samplePaper(p).a;
     if (hd < h0) ao += (h0 - hd) * weight;
     weight *= 0.5;
-    step *= 2.0;
+    aoStep *= 2.0;
   }
   ao = clamp(ao * 0.5, 0.0, 1.0);
   float lighting = (u_ambient + (1.0 - u_ambient) * diffuse) * (1.0 - 0.4 * ao);
