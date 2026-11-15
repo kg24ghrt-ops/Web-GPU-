@@ -9,9 +9,15 @@
  *
  * The same layoutText() used for rendering drives the caret position, so the
  * caret always sits exactly where a glyph is drawn.
+ *
+ * Mixed-script rendering: each line is segmented into script runs. Myanmar
+ * runs are drawn whole so the canvas shaping engine correctly stacks
+ * consonants, vowels, and diacritics (clusters are never split). Latin runs
+ * are drawn cluster-by-cluster with per-glyph density variation for
+ * handwritten realism.
  */
 
-import { layoutText, caretPosition, graphemeClusters, containsMyanmar } from '../typography/typography.js';
+import { layoutText, caretPosition, graphemeClusters, containsMyanmar, isMyanmarCluster } from '../typography/typography.js';
 import { PEN_MATERIALS } from './renderer.js';
 
 /** Ink colour used for text and caret — same blue-black as the pen. */
@@ -47,6 +53,46 @@ export function createTextCanvas(w, h) {
 }
 
 /**
+ * Draw a run of clusters at (x, y). Myanmar runs are drawn whole to preserve
+ * complex-script shaping; Latin runs are drawn cluster-by-cluster with
+ * per-glyph density variation. Returns the advance x after the run.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {string} text - Full line text (for slicing Myanmar runs)
+ * @param {number} x - Current x position
+ * @param {number} y - Baseline y
+ * @param {Array} clusters - Grapheme clusters of the line
+ * @param {number} startIdx - First cluster index of the run
+ * @param {number} endIdx - One-past-last cluster index of the run
+ * @param {boolean} myanmar - Whether this run is Myanmar
+ * @param {number} clusterIdx - Running cluster index (for density hash)
+ * @returns {{x: number, clusterIdx: number}}
+ */
+function drawRun(ctx, text, x, y, clusters, startIdx, endIdx, myanmar, clusterIdx) {
+  const sizePx = 18; // overridden by caller via ctx.font already set
+  if (myanmar) {
+    // Draw the whole Myanmar run at once so shaping (stacking, reordering)
+    // is preserved and clusters are never split ("don't break the knees").
+    const runText = text.slice(clusters[startIdx].start, clusters[endIdx - 1].end);
+    ctx.fillText(runText, x, y);
+    const gw = ctx.measureText(runText).width;
+    return { x: x + gw, clusterIdx: clusterIdx + (endIdx - startIdx) };
+  }
+
+  // Latin: draw cluster-by-cluster for per-glyph density variation.
+  for (let j = startIdx; j < endIdx; j++) {
+    const c = clusters[j];
+    const density = GLYPH_DENSITY_MIN + glyphHash(x, y, clusterIdx) * (GLYPH_DENSITY_MAX - GLYPH_DENSITY_MIN);
+    const gw = ctx.measureText(c.text).width;
+    ctx.globalAlpha = density;
+    ctx.fillText(c.text, x, y);
+    ctx.globalAlpha = 1.0;
+    x += gw;
+    clusterIdx++;
+  }
+  return { x, clusterIdx };
+}
+
+/**
  * Rasterize wrapped text (and optionally the caret) onto the text canvas.
  * @param {HTMLCanvasElement} canvas - Offscreen text canvas
  * @param {string} text - Page text
@@ -72,28 +118,34 @@ export function rasterizeText(canvas, text, fontSpec, widthPx, lineHeightPx, ori
   ctx.fillStyle = TEXT_INK_COLOR;
   ctx.textBaseline = 'alphabetic';
 
-  const myanmar = containsMyanmar(text);
-
   let idx = 0;
   for (const line of lines) {
     const y = originY + idx * lineHeightPx;
-    if (myanmar) {
-      // Draw the whole line at once so the canvas shaping engine can correctly
-      // stack and position Myanmar consonants, vowels, and diacritics.
-      ctx.fillText(line.text, originX, y);
-    } else {
-      // Latin: draw cluster-by-cluster for per-glyph density variation.
-      let x = originX;
-      const clusters = graphemeClusters(line.text);
-      clusters.forEach((c, clusterIdx) => {
-        const density = GLYPH_DENSITY_MIN + glyphHash(x, y, clusterIdx) * (GLYPH_DENSITY_MAX - GLYPH_DENSITY_MIN);
-        const gw = ctx.measureText(c.text).width;
-        ctx.globalAlpha = density;
-        ctx.fillText(c.text, x, y);
-        ctx.globalAlpha = 1.0;
-        x += gw;
-      });
+    const clusters = graphemeClusters(line.text);
+
+    // Segment line into script runs and draw each appropriately.
+    let runStart = 0;
+    let runIsMy = clusters.length > 0 ? isMyanmarCluster(clusters[0].text) : false;
+    let x = originX;
+    let clusterIdx = 0;
+
+    for (let j = 0; j < clusters.length; j++) {
+      const cMy = isMyanmarCluster(clusters[j].text);
+      if (cMy !== runIsMy) {
+        // End current run, start a new one.
+        const res = drawRun(line.text, x, y, clusters, runStart, j, runIsMy, clusterIdx);
+        x = res.x;
+        clusterIdx = res.clusterIdx;
+        runStart = j;
+        runIsMy = cMy;
+      }
     }
+    // Draw the final run.
+    if (clusters.length > 0) {
+      const res = drawRun(line.text, x, y, clusters, runStart, clusters.length, runIsMy, clusterIdx);
+      x = res.x;
+    }
+
     idx++;
   }
 

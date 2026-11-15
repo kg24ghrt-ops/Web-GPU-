@@ -16,6 +16,9 @@
  *   - Myanmar: no spaces between words. Break at phrase boundaries (spaces and
  *     zero-width spaces) and fall back to grapheme breaks via Intl.Segmenter.
  *   - Never break inside a grapheme cluster.
+ *   - Mixed English+Myanmar lines: each script run is measured appropriately
+ *     (Latin per-cluster, Myanmar cumulatively) so both scripts wrap and
+ *     render correctly on the same line.
  */
 
 import { mmToPx } from '../units.js';
@@ -81,6 +84,16 @@ export function fontCss() {
 const MYANMAR = /[\u1000-\u109F\uA9E0-\uA9FF]/;
 export function containsMyanmar(text) {
   return MYANMAR.test(String(text));
+}
+
+/** True if a single character is in the Myanmar Unicode block. */
+export function isMyanmarChar(ch) {
+  return MYANMAR.test(String(ch));
+}
+
+/** True if a grapheme cluster contains any Myanmar character. */
+export function isMyanmarCluster(clusterText) {
+  return MYANMAR.test(String(clusterText));
 }
 
 /** Resolve a font spec object from a font id (+ optional override size). */
@@ -207,7 +220,6 @@ export function graphemeClusters(text) {
 function wrapHard(text, widthPx, font) {
   if (text.length === 0) return [{ text: '', width: 0, start: 0, end: 0 }];
   const clusters = graphemeClusters(text);
-  const myanmar = containsMyanmar(text);
   const lines = [];
   let lineStart = 0;          // character offset where current line begins
   let lineText = '';
@@ -215,19 +227,37 @@ function wrapHard(text, widthPx, font) {
   let lastBreak = -1;         // character offset (exclusive) after last break opp.
   let lastBreakText = '';
   let lastBreakWidth = 0;
+
+  // Script-run tracking for mixed-script lines.
+  // baseWidth  = locked-in width of all completed script runs before current run
+  // runStart   = character offset where current script run begins
+  // runIsMy    = whether current run is Myanmar
+  // runWidth   = width of current script run (measured appropriately per script)
+  let baseWidth = 0;
+  let runStart = 0;
+  let runIsMy = false;
+  let runWidth = 0;
+
   let i = 0;
   while (i < clusters.length) {
     const c = clusters[i];
+    const cMy = isMyanmarCluster(c.text);
 
-    // For Myanmar, measure the cumulative text from the line start so the
-    // canvas shaping engine accounts for complex-script stacking and reordering.
-    // Measuring clusters in isolation overestimates width and causes premature breaks.
-    if (myanmar) {
-      const cumulative = text.slice(lineStart, c.end);
-      lineWidth = measureText(cumulative, font);
+    // When script changes, lock in the previous run and start a new one.
+    if (i > 0 && cMy !== runIsMy) {
+      baseWidth += runWidth;
+      runStart = c.start;
+      runIsMy = cMy;
+      runWidth = measureText(c.text, font);
+    } else if (cMy) {
+      // Myanmar: measure cumulatively from run start (complex-script shaping).
+      runWidth = measureText(text.slice(runStart, c.end), font);
     } else {
-      lineWidth += measureText(c.text, font);
+      // Latin: add individual cluster width.
+      runWidth += measureText(c.text, font);
     }
+
+    lineWidth = baseWidth + runWidth;
 
     const isBreak = BREAK_CHARS.test(c.text);
     if (lineWidth <= widthPx || lineText === '') {
@@ -246,6 +276,10 @@ function wrapHard(text, widthPx, font) {
       lineText = '';
       lineWidth = 0;
       lastBreak = -1;
+      baseWidth = 0;
+      runStart = lineStart;
+      runIsMy = false;
+      runWidth = 0;
       // Re-process from the break target on the fresh line.
       i = clusters.findIndex(cl => cl.start >= breakTarget);
       if (i === -1) i = clusters.length;
@@ -258,6 +292,10 @@ function wrapHard(text, widthPx, font) {
       lineText = '';
       lineWidth = 0;
       lastBreak = -1;
+      baseWidth = 0;
+      runStart = lineStart;
+      runIsMy = false;
+      runWidth = 0;
       i++;
     } else {
       // No break opportunity on this line: finalise it and start a new line
@@ -267,6 +305,10 @@ function wrapHard(text, widthPx, font) {
       lineText = '';
       lineWidth = 0;
       lastBreak = -1;
+      baseWidth = 0;
+      runStart = lineStart;
+      runIsMy = false;
+      runWidth = 0;
     }
   }
   if (lineText !== '' || lines.length === 0) {
@@ -318,11 +360,7 @@ export function caretPosition(text, fontSpec, widthPx, lineHeightPx, originX, or
     }
   }
   if (!target) return null;
-  // For Myanmar, measure from the line start so complex-script shaping is
-  // accounted for; measuring the slice in isolation would misplace the caret.
-  const before = containsMyanmar(text)
-    ? String(text).slice(target.start, o)
-    : String(text).slice(target.start, o);
+  const before = String(text).slice(target.start, o);
   const x = originX + measureText(before, fontSpec);
   const y = originY + lineIndex * lineHeightPx;
   return { x, y, lineIndex, lineHeightPx };

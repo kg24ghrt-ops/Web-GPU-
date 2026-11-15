@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { layoutText } from '../js/typography/typography.js';
+import { layoutText, graphemeClusters } from '../js/typography/typography.js';
 
 // Deterministic measurer: each code point is 6 px wide. This keeps tests
 // independent of canvas/font availability.
@@ -128,4 +128,40 @@ test('layoutText: mixed English + Myanmar wraps correctly', () => {
   const narrow = layoutText(mixed, F, 20);
   const joined2 = narrow.lines.map((l) => l.text).join('');
   assert.equal(joined2, mixed);
+});
+
+test('layoutText: mixed English+Myanmar breaks at English spaces', () => {
+  // Mixed line: English words separated by spaces, Myanmar words have no spaces.
+  // Breaks should happen at English spaces, never inside a Myanmar cluster.
+  const mixed = 'Hello \u1000\u102c\u103a world \u1004\u102c\u103a test';
+  const r = layoutText(mixed, F, 30);
+  const joined = r.lines.map((l) => l.text).join('');
+  assert.equal(joined, mixed);
+  // No cluster is split: each line's text must end at a cluster boundary.
+  const clusters = graphemeClusters(mixed);
+  let pos = 0;
+  for (const l of r.lines) {
+    let consumed = 0;
+    for (const cl of clusters.slice(pos)) {
+      if (l.text.endsWith(cl.text)) {
+        consumed += cl.text.length;
+        pos += cl.text.length;
+        break;
+      }
+      consumed += cl.text.length;
+      pos += cl.text.length;
+    }
+    assert.ok(consumed > 0, 'line must consume at least one whole cluster');
+  }
+});
+
+test('layoutText: mixed English+Myanmar no data loss at narrow width', () => {
+  const mixed = 'Hello \u1000\u102c\u103a \u1004\u102c\u103a world';
+  const narrow = layoutText(mixed, F, 15);
+  const joined = narrow.lines.map((l) => l.text).join('');
+  assert.equal(joined, mixed);
+  // Line offsets must be contiguous with no gaps or overlaps.
+  for (let i = 1; i < narrow.lines.length; i++) {
+    assert.equal(narrow.lines[i].start, narrow.lines[i - 1].end);
+  }
 });

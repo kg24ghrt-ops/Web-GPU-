@@ -264,6 +264,15 @@ void main() {
   // Text layer: coverage pools in fibre valleys, soft edge, lit like paper.
   vec4 text = texture(u_textTex, clamp(uv, 0.0, 1.0));
   float textCoverage = text.a;
+  // Slight ink bleed/spread (~0.4px) at glyph edges for a soft pen-like halo.
+  vec2 step = vec2(1.0 / u_resolution.x, 1.0 / u_resolution.y);
+  float bleed = max(text.a,
+    max(texture(u_textTex, clamp(uv + vec2(step.x, 0.0), 0.0, 1.0)).a,
+        texture(u_textTex, clamp(uv + vec2(-step.x, 0.0), 0.0, 1.0)).a));
+  bleed = max(bleed,
+    max(texture(u_textTex, clamp(uv + vec2(0.0, step.y), 0.0, 1.0)).a,
+        texture(u_textTex, clamp(uv + vec2(0.0, -step.y), 0.0, 1.0)).a));
+  textCoverage = max(textCoverage, bleed * 0.35);
   float textAlpha = textCoverage * inkPool;
   vec3 textColour = vec3(0.102, 0.227, 0.361); // ballpoint blue-black #1a3a5c
   vec3 litText = textColour * lighting;

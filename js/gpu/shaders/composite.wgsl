@@ -163,7 +163,16 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
 
   // ---- Text layer: coverage pools in fibre valleys, soft edge, lit like paper ----
   let text = textureSample(textTex, textSampler, uv);
-  let textCoverage = text.a;
+  var textCoverage = text.a;
+  // Slight ink bleed/spread (~0.4px) at glyph edges for a soft pen-like halo.
+  var step = vec2<f32>(1.0) / dims();
+  var bleed = max(text.a,
+    max(textureSample(textTex, textSampler, uv + vec2<f32>( step.x, 0.0)).a,
+        textureSample(textTex, textSampler, uv + vec2<f32>(-step.x, 0.0)).a));
+  bleed = max(bleed,
+    max(textureSample(textTex, textSampler, uv + vec2<f32>(0.0,  step.y)).a,
+        textureSample(textTex, textSampler, uv + vec2<f32>(0.0, -step.y)).a));
+  textCoverage = max(textCoverage, bleed * 0.35);
   let textAlpha = textCoverage * inkPool;
   let textColour = vec3<f32>(0.102, 0.227, 0.361); // ballpoint blue-black #1a3a5c
   let litText = textColour * lighting;
