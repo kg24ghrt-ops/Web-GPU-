@@ -289,21 +289,6 @@ function overflowLinesFor(page) {
   return { lines, maxLines, area, lineHeightPx, fontSpec };
 }
 
-function overflowLinesFor(page) {
-  const t = getTemplate(page.paperType || settings.get('paper.type'));
-  const size = getPaperSize(t.paperSizeId);
-  const pageW = mmToPx(size.widthMm);
-  const pageH = mmToPx(size.heightMm);
-  const area = writingAreaRect(t, size, pageW, pageH);
-  const lineHeightPx = mmToPx(t.lineSpacingMm > 0 ? t.lineSpacingMm : 7.1);
-  const maxLines = Math.floor(area.h / lineHeightPx);
-  const text = notebook.getText(page.id);
-  const script = containsMyanmar(text) ? 'myanmar' : 'english';
-  const fontSpec = resolveFont(notebook.fontChoice(script), parseFloat(FONT_SIZE));
-  const { lines } = layoutText(text, fontSpec, area.w);
-  return { lines, maxLines, area, lineHeightPx, fontSpec };
-}
-
 function handleOverflow() {
   const page = notebook.currentPage();
   if (!page) return;
