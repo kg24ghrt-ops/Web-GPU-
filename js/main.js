@@ -7,7 +7,7 @@ import { Notebook } from './notebook/notebook.js';
 import { mmToPx } from './units.js';
 import { getTemplate, listTemplates } from './paper/templates.js';
 import { getPaperSize } from './paper/sizes.js';
-import { ensureFonts, FONT_SIZE, loadFonts, resolveFont, fontIdForScript, DEFAULT_FONT, layoutText, containsMyanmar } from './typography/typography.js';
+import { ensureFonts, FONT_SPEC, FONT_SIZE, loadFonts, resolveFont, fontIdForScript, DEFAULT_FONT, layoutText, containsMyanmar } from './typography/typography.js';
 import { createTextCanvas, rasterizeText, caretAt } from './gpu/text-layer.js';
 import { TextEditor } from './editor/text-editor.js';
 import { Stroke } from './handwriting/handwriting.js';

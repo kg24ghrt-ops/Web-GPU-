@@ -172,7 +172,7 @@ function measureText(text, fontSpec) {
 // boundaries use spaces/ZWSP since there are no inter-word spaces).
 const BREAK_CHARS = /[\u0020\u200B]/;
 
-function graphemeClusters(text) {
+export function graphemeClusters(text) {
   const clusters = [];
   if (typeof Intl !== 'undefined' && Intl.Segmenter) {
     try {
