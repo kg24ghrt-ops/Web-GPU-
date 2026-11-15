@@ -11,7 +11,7 @@
  * caret always sits exactly where a glyph is drawn.
  */
 
-import { layoutText, caretPosition, graphemeClusters } from '../typography/typography.js';
+import { layoutText, caretPosition, graphemeClusters, containsMyanmar } from '../typography/typography.js';
 import { PEN_MATERIALS } from './renderer.js';
 
 /** Ink colour used for text and caret — same blue-black as the pen. */
@@ -72,19 +72,28 @@ export function rasterizeText(canvas, text, fontSpec, widthPx, lineHeightPx, ori
   ctx.fillStyle = TEXT_INK_COLOR;
   ctx.textBaseline = 'alphabetic';
 
+  const myanmar = containsMyanmar(text);
+
   let idx = 0;
   for (const line of lines) {
     const y = originY + idx * lineHeightPx;
-    let x = originX;
-    const clusters = graphemeClusters(line.text);
-    clusters.forEach((c, clusterIdx) => {
-      const density = GLYPH_DENSITY_MIN + glyphHash(x, y, clusterIdx) * (GLYPH_DENSITY_MAX - GLYPH_DENSITY_MIN);
-      const gw = ctx.measureText(c.text).width;
-      ctx.globalAlpha = density;
-      ctx.fillText(c.text, x, y);
-      ctx.globalAlpha = 1.0;
-      x += gw;
-    });
+    if (myanmar) {
+      // Draw the whole line at once so the canvas shaping engine can correctly
+      // stack and position Myanmar consonants, vowels, and diacritics.
+      ctx.fillText(line.text, originX, y);
+    } else {
+      // Latin: draw cluster-by-cluster for per-glyph density variation.
+      let x = originX;
+      const clusters = graphemeClusters(line.text);
+      clusters.forEach((c, clusterIdx) => {
+        const density = GLYPH_DENSITY_MIN + glyphHash(x, y, clusterIdx) * (GLYPH_DENSITY_MAX - GLYPH_DENSITY_MIN);
+        const gw = ctx.measureText(c.text).width;
+        ctx.globalAlpha = density;
+        ctx.fillText(c.text, x, y);
+        ctx.globalAlpha = 1.0;
+        x += gw;
+      });
+    }
     idx++;
   }
 

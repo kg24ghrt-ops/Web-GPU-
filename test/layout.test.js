@@ -76,3 +76,56 @@ test('layoutText: char offsets cover the whole text', () => {
     prevEnd = l.end;
   }
 });
+
+test('layoutText: Myanmar wraps at phrase punctuation (၊ and ।)', () => {
+  // Myanmar comma U+104A and full stop U+104B are break opportunities.
+  // Text has no spaces between words (typical Myanmar), so breaks can only
+  // happen after these phrase punctuation marks or at grapheme boundaries.
+  const my = '\u1000\u102c\u103a\u104A\u1004\u102c\u103a\u104B';
+  const r = layoutText(my, F, 200);
+  assert.equal(r.lines.length, 1);
+  assert.equal(r.lines[0].text, my);
+  // Narrow width: break after each phrase punctuation.
+  const narrow = layoutText(my, F, 30);
+  const joined = narrow.lines.map((l) => l.text).join('');
+  assert.equal(joined, my);
+  // No data loss: every character covered exactly once by line offsets.
+  const seen = new Array(my.length).fill(false);
+  for (const l of narrow.lines) {
+    for (let k = l.start; k < l.end; k++) seen[k] = true;
+  }
+  assert.ok(seen.every((x) => x));
+});
+
+test('layoutText: Myanmar never breaks inside a grapheme cluster', () => {
+  // A multi-codepoint Myanmar cluster must stay together on one line.
+  const cluster = '\u1000\u102c\u103a'; // ka + vowel sign + asat (stacking cluster)
+  const r = layoutText(cluster + ' ' + cluster, F, 20);
+  assert.equal(r.lines.length, 2);
+  assert.equal(r.lines[0].text, cluster + ' ');
+  assert.equal(r.lines[1].text, cluster);
+});
+
+test('layoutText: Myanmar with no break points wraps at grapheme boundaries', () => {
+  // Pure Myanmar text with no spaces or punctuation: must wrap at cluster
+  // boundaries, never splitting a cluster, and never losing text.
+  const my = '\u1000\u102c\u103a\u1004\u102c\u103a\u1007\u102c\u103a';
+  const narrow = layoutText(my, F, 15);
+  const joined = narrow.lines.map((l) => l.text).join('');
+  assert.equal(joined, my);
+  // Each line's end offset must match the next line's start offset (no gaps,
+  // no overlaps) — meaning clusters are never split.
+  for (let i = 1; i < narrow.lines.length; i++) {
+    assert.equal(narrow.lines[i].start, narrow.lines[i - 1].end);
+  }
+});
+
+test('layoutText: mixed English + Myanmar wraps correctly', () => {
+  const mixed = 'Hello \u1000\u102c\u103a world';
+  const r = layoutText(mixed, F, 100);
+  const joined = r.lines.map((l) => l.text).join('');
+  assert.equal(joined, mixed);
+  const narrow = layoutText(mixed, F, 20);
+  const joined2 = narrow.lines.map((l) => l.text).join('');
+  assert.equal(joined2, mixed);
+});

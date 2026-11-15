@@ -168,15 +168,20 @@ function measureText(text, fontSpec) {
 /* Grapheme segmentation                                              */
 /* ------------------------------------------------------------------ */
 
-// Break-opportunity characters: spaces and zero-width spaces (Myanmar phrase
-// boundaries use spaces/ZWSP since there are no inter-word spaces).
-const BREAK_CHARS = /[\u0020\u200B]/;
+// Break-opportunity characters: spaces, zero-width spaces, and Myanmar
+// phrase-boundary punctuation (comma U+104A, full stop U+104B). Myanmar has no
+// inter-word spaces, so these punctuation marks are the primary break points.
+// The break happens AFTER the punctuation character (it stays on the current line).
+const BREAK_CHARS = /[\u0020\u200B\u104A\u104B]/;
 
 export function graphemeClusters(text) {
   const clusters = [];
   if (typeof Intl !== 'undefined' && Intl.Segmenter) {
     try {
-      const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+      // Use Burmese locale for Myanmar text so complex-script clusters
+      // (stacked consonants, vowels, diacritics) segment correctly.
+      const locale = containsMyanmar(text) ? 'my' : 'en';
+      const segmenter = new Intl.Segmenter(locale, { granularity: 'grapheme' });
       let pos = 0;
       for (const { segment, index } of segmenter.segment(text)) {
         const start = index != null ? index : pos;
@@ -204,29 +209,37 @@ function wrapHard(text, widthPx, font) {
   const clusters = graphemeClusters(text);
   const myanmar = containsMyanmar(text);
   const lines = [];
-  let lineStart = 0;          // cluster index where current line begins
+  let lineStart = 0;          // character offset where current line begins
   let lineText = '';
   let lineWidth = 0;
-  let lastBreak = -1;         // cluster index (exclusive) after last break opp.
+  let lastBreak = -1;         // character offset (exclusive) after last break opp.
   let lastBreakText = '';
   let lastBreakWidth = 0;
   let i = 0;
   while (i < clusters.length) {
     const c = clusters[i];
-    const w = measureText(c.text, font);
-    const trialWidth = lineWidth + w;
+
+    // For Myanmar, measure the cumulative text from the line start so the
+    // canvas shaping engine accounts for complex-script stacking and reordering.
+    // Measuring clusters in isolation overestimates width and causes premature breaks.
+    if (myanmar) {
+      const cumulative = text.slice(lineStart, c.end);
+      lineWidth = measureText(cumulative, font);
+    } else {
+      lineWidth += measureText(c.text, font);
+    }
+
     const isBreak = BREAK_CHARS.test(c.text);
-    if (trialWidth <= widthPx || lineText === '') {
+    if (lineWidth <= widthPx || lineText === '') {
       lineText += c.text;
-      lineWidth = trialWidth;
       if (isBreak) {
-        lastBreak = i + 1;
+        lastBreak = c.end;
         lastBreakText = lineText;
         lastBreakWidth = lineWidth;
       }
       i++;
     } else if (lastBreak > lineStart) {
-      // Break at the last phrase/space opportunity.
+      // Break at the last phrase/space/punctuation opportunity.
       const breakTarget = lastBreak;
       lines.push({ text: lastBreakText, width: lastBreakWidth, start: lineStart, end: breakTarget });
       lineStart = breakTarget;
@@ -234,19 +247,30 @@ function wrapHard(text, widthPx, font) {
       lineWidth = 0;
       lastBreak = -1;
       // Re-process from the break target on the fresh line.
-      i = breakTarget;
+      i = clusters.findIndex(cl => cl.start >= breakTarget);
+      if (i === -1) i = clusters.length;
+    } else if (isBreak) {
+      // The break character itself doesn't fit on this line and there is no
+      // earlier break point: include it on this line and break after it.
+      lineText += c.text;
+      lines.push({ text: lineText, width: lineWidth, start: lineStart, end: c.end });
+      lineStart = c.end;
+      lineText = '';
+      lineWidth = 0;
+      lastBreak = -1;
+      i++;
     } else {
       // No break opportunity on this line: finalise it and start a new line
       // with the current cluster (breaks at grapheme boundaries only).
-      lines.push({ text: lineText, width: lineWidth, start: lineStart, end: i });
-      lineStart = i;
+      lines.push({ text: lineText, width: lineWidth, start: lineStart, end: c.start });
+      lineStart = c.start;
       lineText = '';
       lineWidth = 0;
       lastBreak = -1;
     }
   }
   if (lineText !== '' || lines.length === 0) {
-    lines.push({ text: lineText, width: lineWidth, start: lineStart, end: clusters.length });
+    lines.push({ text: lineText, width: lineWidth, start: lineStart, end: text.length });
   }
   return lines;
 }
@@ -294,7 +318,11 @@ export function caretPosition(text, fontSpec, widthPx, lineHeightPx, originX, or
     }
   }
   if (!target) return null;
-  const before = String(text).slice(target.start, o);
+  // For Myanmar, measure from the line start so complex-script shaping is
+  // accounted for; measuring the slice in isolation would misplace the caret.
+  const before = containsMyanmar(text)
+    ? String(text).slice(target.start, o)
+    : String(text).slice(target.start, o);
   const x = originX + measureText(before, fontSpec);
   const y = originY + lineIndex * lineHeightPx;
   return { x, y, lineIndex, lineHeightPx };
