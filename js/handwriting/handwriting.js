@@ -59,14 +59,13 @@ export class Handwriting {
     if (s.points.length < 1) return;
     const c = this._ctx;
     const pts = s.points;
-    const baseWidth = s.width;
     const n = pts.length;
+    const baseWidth = s.width;
 
     // Per-point pressure: deterministic jitter based on point index/time.
     const pressure = pts.map((p, i) => {
       const h = ((i * 7919 + Math.floor(p.t / 17)) * 2654435761) | 0;
-      const j = ((h >>> 0) / 4294967296) * 0.3 + 0.85; // 0.85..1.15
-      return j;
+      return ((h >>> 0) / 4294967296) * 0.3 + 0.85;
     });
 
     // Width envelope: taper at both ends, pressure variation in the middle.
@@ -76,47 +75,58 @@ export class Handwriting {
       return baseWidth * pressure[i] * taper * 0.9 + baseWidth * 0.1;
     };
 
-    // Build a smoothed path with slight perpendicular jitter.
+    // Apply subtle perpendicular jitter to interior points for organic feel.
+    const jittered = pts.map((p, i) => {
+      if (i === 0 || i === n - 1 || n <= 2) return p;
+      const prev = pts[i - 1];
+      const next = pts[i + 1];
+      const dx = next.x - prev.x;
+      const dy = next.y - prev.y;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const nx = -dy / len;
+      const ny = dx / len;
+      const h = ((i * 104729 + Math.floor(p.t / 13)) * 2654435761) | 0;
+      const j = (((h >>> 0) / 4294967296) - 0.5) * 0.4;
+      return { x: p.x + nx * j, y: p.y + ny * j };
+    });
+
     c.beginPath();
     c.lineCap = 'round';
     c.lineJoin = 'round';
     c.strokeStyle = s.color;
 
-    const p0 = pts[0];
-    c.moveTo(p0.x, p0.y);
-
-    for (let i = 1; i < n; i++) {
-      const p = pts[i];
-      const prev = pts[i - 1];
-
-      // Perpendicular jitter for organic wobble (subtle, ~0.3px).
-      const dx = p.x - prev.x;
-      const dy = p.y - prev.y;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const nx = -dy / len;
-      const ny = dx / len;
-      const h2 = ((i * 104729 + Math.floor(p.t / 13)) * 2654435761) | 0;
-      const jitter = (((h2 >>> 0) / 4294967296) - 0.5) * 0.4;
-
-      const jx = p.x + nx * jitter;
-      const jy = p.y + ny * jitter;
-
-      // Quadratic curve through the midpoint for smooth pen flow.
-      const mx = (prev.x + jx) / 2;
-      const my = (prev.y + jy) / 2;
-      c.quadraticCurveTo(prev.x, prev.y, mx, my);
-
-      // Vary width along the stroke via lineWidth changes between segments.
-      // We approximate by drawing each segment separately with its width.
-      c.lineWidth = widthAt(i);
+    if (n === 1) {
+      c.moveTo(jittered[0].x, jittered[0].y);
+      c.lineWidth = widthAt(0);
       c.stroke();
-      c.beginPath();
-      c.moveTo(mx, my);
+      return;
     }
 
-    // Close out final segment.
+    // Midpoints between consecutive (jittered) points.
+    const mid = [];
+    for (let i = 0; i < n - 1; i++) {
+      mid.push({
+        x: (jittered[i].x + jittered[i + 1].x) / 2,
+        y: (jittered[i].y + jittered[i + 1].y) / 2,
+      });
+    }
+
+    // Start at first midpoint.
+    c.moveTo(mid[0].x, mid[0].y);
+
+    // Quadratic curves through each interior point (control point pulls
+    // the curve toward the actual point, midpoint keeps it smooth).
+    for (let i = 1; i < n - 1; i++) {
+      c.lineWidth = widthAt(i);
+      c.quadraticCurveTo(jittered[i].x, jittered[i].y, mid[i].x, mid[i].y);
+      c.stroke();
+      c.beginPath();
+      c.moveTo(mid[i].x, mid[i].y);
+    }
+
+    // Final segment to last point.
     c.lineWidth = widthAt(n - 1);
-    c.lineTo(pts[n - 1].x, pts[n - 1].y);
+    c.lineTo(jittered[n - 1].x, jittered[n - 1].y);
     c.stroke();
   }
   getStrokes() { return this._strokes.map(s => s.toJSON()); }

@@ -6,10 +6,6 @@ import { layoutText, graphemeClusters } from '../js/typography/typography.js';
 // independent of canvas/font availability.
 const measure = (text) => [...String(text)].length * 6;
 globalThis.__TEXT_MEASURE__ = measure;
-import('../js/typography/typography.js').then((mod) => {
-  // nothing to do; layoutText reads measureText directly via its internal
-  // measurer hook which we set below in the helper.
-});
 import { setTextMeasurer } from '../js/typography/typography.js';
 setTextMeasurer(measure);
 

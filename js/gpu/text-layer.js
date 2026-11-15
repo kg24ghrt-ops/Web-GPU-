@@ -68,7 +68,6 @@ export function createTextCanvas(w, h) {
  * @returns {{x: number, clusterIdx: number}}
  */
 function drawRun(ctx, text, x, y, clusters, startIdx, endIdx, myanmar, clusterIdx) {
-  const sizePx = 18; // overridden by caller via ctx.font already set
   if (myanmar) {
     // Draw the whole Myanmar run at once so shaping (stacking, reordering)
     // is preserved and clusters are never split ("don't break the knees").
