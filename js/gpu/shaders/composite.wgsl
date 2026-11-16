@@ -43,6 +43,8 @@ struct Uniforms {
 @group(0) @binding(2) var paperSampler: sampler;
 @group(0) @binding(3) var inkTex: texture_2d<f32>;
 @group(0) @binding(4) var inkSampler: sampler;
+@group(0) @binding(5) var textTex: texture_2d<f32>;
+@group(0) @binding(6) var textSampler: sampler;
 
 fn dims() -> vec2<f32> {
   return vec2<f32>(uniforms.pageWidthPx, uniforms.pageHeightPx);
@@ -53,7 +55,7 @@ fn texCoords(uv: vec2<f32>) -> vec2<i32> {
 }
 
 fn sampleHeight(uv: vec2<f32>) -> f32 {
-  return textureLoad(paperTex, texCoords(uv), 0).a;
+  return (textureLoad(paperTex, texCoords(uv), 0).a - 0.5) / 4.0;
 }
 
 fn normalAndRoughnessFromHeight(uv: vec2<f32>) -> vec3<f32> {
@@ -62,7 +64,7 @@ fn normalAndRoughnessFromHeight(uv: vec2<f32>) -> vec3<f32> {
   let h = sampleHeight(uv);
   let hx = sampleHeight(uv + tx) - sampleHeight(uv - tx);
   let hy = sampleHeight(uv + ty) - sampleHeight(uv - ty);
-  let normal = normalize(vec3<f32>(-hx * 0.5, -hy * 0.5, 1.0));
+  let normal = normalize(vec3<f32>(-hx * 3.0, -hy * 3.0, 1.0));
   let grad = sqrt(hx * hx + hy * hy) * 0.5;
   let roughness = clamp(grad, 0.0, 1.0);
   return vec3<f32>(normal.x, normal.y, roughness);
@@ -72,17 +74,17 @@ fn ambientOcclusion(uv: vec2<f32>) -> f32 {
   let h0 = sampleHeight(uv);
   var ao = 0.0;
   var weight = 1.0;
-  var step = 1.0;
+  var aoStep = 1.0;
   for (var i = 0; i < 4; i++) {
     let angle = f32(i) * 1.5708;
     let dir = vec2<f32>(cos(angle), sin(angle));
-    let p = uv + dir * step * 1.0 / dims();
+    let p = uv + dir * aoStep * 1.0 / dims();
     let hd = sampleHeight(p);
     if (hd < h0) {
       ao += (h0 - hd) * weight;
     }
     weight *= 0.5;
-    step *= 2.0;
+    aoStep *= 2.0;
   }
   return clamp(ao * 0.5, 0.0, 1.0);
 }
@@ -137,28 +139,57 @@ fn mainFs(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
   let marginHalf = uniforms.marginLineWidthPx * 0.5;
   let marginAlpha = 1.0 - smoothstep(marginHalf - 0.4, marginHalf + 0.4, marginDist);
 
-  // ---- Composite ruling over lit paper ----
+  // ---- Ruling printed on the surface: height modulates line strength ----
+  let h = sampleHeight(uv);
+  let ruleRelief = clamp(1.0 - h * 1.5, 0.6, 1.0);
   let ruleMix = min(lineAlpha + marginAlpha, 1.0);
   let lineColour = mix(
     vec3<f32>(uniforms.lineColorR, uniforms.lineColorG, uniforms.lineColorB),
     vec3<f32>(uniforms.marginLineColorR, uniforms.marginLineColorG, uniforms.marginLineColorB),
     select(0.0, 1.0, marginAlpha > lineAlpha)
   );
+  // Apply the relief once: modulate line colour strength by surface height.
   let paperWithRule = mix(
     lit,
-    lit * (1.0 - 0.6 * ruleMix) + lineColour * (0.6 * ruleMix),
+    lit * (1.0 - 0.6 * ruleMix) + lineColour * (0.6 * ruleMix * ruleRelief),
     ruleMix
   );
 
-  // ---- Ink layer: premultiplied alpha over paper ----
+  // ---- Ink layer: ink pools in fibre valleys and skips high tooth ----
   let ink = textureSample(inkTex, inkSampler, uv);
-  let outColour = paperWithRule * (1.0 - ink.a) + ink.rgb;
-  let outAlpha = 1.0 - (1.0 - paper.a) * (1.0 - ink.a);
+  let inkPool = mix(0.70, 1.0, clamp(0.25 - h * 4.0, 0.0, 1.0));
+  let inkAlpha = ink.a * inkPool;
+  let coloured = paperWithRule * (1.0 - inkAlpha) + ink.rgb * inkPool;
 
-  // ---- Edge vignette: subtle darkening toward page edges for realism ----
+  // ---- Text layer: coverage pools in fibre valleys, soft edge, lit like paper ----
+  let text = textureSample(textTex, textSampler, uv);
+  var textCoverage = text.a;
+  // Slight ink bleed/spread (~0.4px) at glyph edges for a soft pen-like halo.
+  var bleedStep = vec2<f32>(1.0) / dims();
+  var bleed = max(text.a,
+    max(textureSample(textTex, textSampler, uv + vec2<f32>( bleedStep.x, 0.0)).a,
+        textureSample(textTex, textSampler, uv + vec2<f32>(-bleedStep.x, 0.0)).a));
+  bleed = max(bleed,
+    max(textureSample(textTex, textSampler, uv + vec2<f32>(0.0,  bleedStep.y)).a,
+        textureSample(textTex, textSampler, uv + vec2<f32>(0.0, -bleedStep.y)).a));
+  textCoverage = max(textCoverage, bleed * 0.35);
+  let textAlpha = textCoverage * inkPool;
+  let textColour = vec3<f32>(0.102, 0.227, 0.361); // ballpoint blue-black #1a3a5c
+  let litText = textColour * lighting;
+  let outColour = coloured * (1.0 - textAlpha) + litText * inkPool;
+  let outAlpha = 1.0;
+
+  // ---- Edge vignette + soft page-edge rim (sheet thickness catches light) ----
   let d = distance(uv, vec2<f32>(0.5, 0.5));
   let vignette = 1.0 - smoothstep(0.55, 0.85, d) * 0.06;
-  let outColourVignette = outColour * vignette;
+  let edgeDist = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+  let edgeRim = 1.0 - smoothstep(0.0, 0.05, edgeDist);
+  let edgeGlow = edgeRim * 0.05;
+  // Edge curl: directional shade across the outer edge so one corner lifts
+  // (catching light) and the opposite casts a shadow.
+  let curlDir = (uv.x - 0.5) + (uv.y - 0.5);
+  let curlShade = edgeRim * curlDir * 0.015;
+  let outColourVignette = outColour * vignette * (1.0 + edgeGlow + curlShade);
 
   return vec4<f32>(outColourVignette, outAlpha);
 }

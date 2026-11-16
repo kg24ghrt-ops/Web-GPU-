@@ -83,42 +83,40 @@ void main() {
   vec2 uv = gl_FragCoord.xy / u_resolution;
   float s = u_seed;
 
-  // Base colour: off-white with nonuniform distribution.
-  float base = fbm2(uv * 3.0 + s, 4);
-  float colourShift = fbm2(uv * 7.0 + s + 100.0, 3);
-  float ageShift = fbm2(uv * 1.5 + s + 4000.0, 3);
-  vec3 paperColour = vec3(
-    0.965 + 0.018 * base + 0.006 * colourShift + 0.004 * ageShift,
-    0.958 + 0.014 * base + 0.005 * colourShift + 0.003 * ageShift,
-    0.930 + 0.012 * base + 0.004 * colourShift + 0.002 * ageShift);
+  // Base colour: warm off-white (cream), no blue cast.
+  vec3 paperColour = vec3(0.985, 0.978, 0.955);
 
-  // Multi-scale fibres.
-  vec2 fibreDir = vec2(0.92, 0.39);
-  float fibreDensity = 0.55 + 0.25 * fbm2(uv * 2.0 + s + 200.0, 3);
-  float fine = fibreFbm(uv * 40.0, fibreDir, 3);
-  float broad = fibreFbm(uv * 10.0, fibreDir, 4);
-  float fibreMask = smoothstep(0.52, 0.70, 0.5 * fine + 0.35 * broad) * fibreDensity;
+  // Large-scale faint mottling (< 2% brightness change).
+  float mottle = 0.015 * fbm2(uv * 0.8 + s + 7000.0, 3);
 
-  // Paper tooth + staining.
-  float tooth = fbm2(uv * 120.0 + s + 300.0, 2);
-  float stain = fbm2(uv * 0.8 + s + 5000.0, 4);
-  float stainMask = smoothstep(0.45, 0.65, stain);
+  // Fibres: fine, short, randomly oriented fibres at low contrast.
+  // A few orientations so it looks like fibre flecks, not streaks.
+  vec2 fibreDirA = vec2(1.0, 0.4);
+  vec2 fibreDirB = vec2(-0.4, 1.0);
+  vec2 fibreDirC = vec2(1.0, -0.4);
+  float fibreA = fibreFbm(uv * 60.0, fibreDirA, 2);
+  float fibreB = fibreFbm(uv * 60.0, fibreDirB, 2);
+  float fibreC = fibreFbm(uv * 60.0, fibreDirC, 2);
+  float fibreMask = smoothstep(0.62, 0.78, (fibreA + fibreB + fibreC) / 3.0) * 0.25;
+
+  // Paper tooth: fine bump texture for surface grain.
+  float tooth = fbm2(uv * 150.0 + s + 3000.0, 2);
 
   // Surface height field.
   float crease = ridged2(uv * 2.0 + s + 6000.0, 4);
-  float fibreHeight = 0.06 * fbm2(uv * 6.0 + s + 400.0, 5)
-                   + 0.02 * fbm2(uv * 30.0 + s + 500.0, 3);
-  float toothHeight = 0.008 * tooth;
-  float height = 0.03 * crease + fibreHeight - 0.015 * fibreMask + toothHeight;
+  float fibreHeight = 0.09 * fbm2(uv * 6.0 + s + 400.0, 5)
+                   + 0.03 * fbm2(uv * 30.0 + s + 500.0, 3);
+  float toothHeight = 0.012 * tooth;
+  float height = 0.03 * crease + fibreHeight - 0.02 * fibreMask + toothHeight;
 
-  // Output colour.
+  // Output colour: warm cream with fibre flecks, subtle grain and mottling.
   float grain = fbm2(uv * 90.0 + s + 300.0, 2);
   vec3 outColour = paperColour * vec3(
-    1.0 - 0.06 * fibreMask + 0.02 * grain - 0.02 * stainMask,
-    1.0 - 0.04 * fibreMask + 0.02 * grain - 0.015 * stainMask,
-    1.0 - 0.03 * fibreMask + 0.015 * grain - 0.01 * stainMask);
+    1.0 - 0.04 * fibreMask + 0.02 * grain + mottle,
+    1.0 - 0.03 * fibreMask + 0.015 * grain + mottle,
+    1.0 - 0.02 * fibreMask + 0.01 * grain + mottle);
 
-  fragColor = vec4(outColour, height);
+  fragColor = vec4(outColour, clamp(0.5 + height * 4.0, 0.0, 1.0));
 }`;
 
 const INK_VS = `#version 300 es
@@ -183,10 +181,13 @@ uniform vec3 u_lightDir;
 uniform float u_ambient;
 uniform sampler2D u_paperTex;
 uniform sampler2D u_inkTex;
+uniform sampler2D u_textTex;
 out vec4 fragColor;
 
 vec4 samplePaper(vec2 uv) {
-  return texture(u_paperTex, clamp(uv, 0.0, 1.0));
+  vec4 p = texture(u_paperTex, clamp(uv, 0.0, 1.0));
+  p.a = (p.a - 0.5) / 4.0;
+  return p;
 }
 vec4 sampleInk(vec2 uv) {
   return texture(u_inkTex, clamp(uv, 0.0, 1.0));
@@ -203,7 +204,7 @@ void main() {
   float h = samplePaper(uv).a;
   float hx = samplePaper(uv + tx).a - samplePaper(uv - tx).a;
   float hy = samplePaper(uv + ty).a - samplePaper(uv - ty).a;
-  vec3 normal = normalize(vec3(-hx * 0.5, -hy * 0.5, 1.0));
+  vec3 normal = normalize(vec3(-hx * 3.0, -hy * 3.0, 1.0));
   float grad = sqrt(hx * hx + hy * hy) * 0.5;
   float roughness = clamp(grad, 0.0, 1.0);
   vec3 lightDir = normalize(u_lightDir);
@@ -218,15 +219,15 @@ void main() {
   float h0 = samplePaper(uv).a;
   float ao = 0.0;
   float weight = 1.0;
-  float step = 1.0;
+  float aoStep = 1.0;
   for (int i = 0; i < 4; i++) {
     float angle = float(i) * 1.5708;
     vec2 dir = vec2(cos(angle), sin(angle));
-    vec2 p = uv + dir * step * vec2(1.0 / u_resolution.x, 1.0 / u_resolution.y);
+    vec2 p = uv + dir * aoStep * vec2(1.0 / u_resolution.x, 1.0 / u_resolution.y);
     float hd = samplePaper(p).a;
     if (hd < h0) ao += (h0 - hd) * weight;
     weight *= 0.5;
-    step *= 2.0;
+    aoStep *= 2.0;
   }
   ao = clamp(ao * 0.5, 0.0, 1.0);
   float lighting = (u_ambient + (1.0 - u_ambient) * diffuse) * (1.0 - 0.4 * ao);
@@ -247,20 +248,46 @@ void main() {
   float marginAlpha = 1.0 - smoothstep(marginHalf - 0.4, marginHalf + 0.4, marginDist);
 
   float ruleMix = min(lineAlpha + marginAlpha, 1.0);
+  float hPaper = paper.a;
+  float ruleRelief = clamp(1.0 - hPaper * 1.5, 0.6, 1.0);
   vec3 lineColour = mix(u_lineColor.rgb, u_marginLineColor.rgb,
                         marginAlpha > lineAlpha ? 1.0 : 0.0);
   vec3 paperWithRule = mix(lit,
-    lit * (1.0 - 0.6 * ruleMix) + lineColour * (0.6 * ruleMix), ruleMix);
+    lit * (1.0 - 0.6 * ruleMix) + lineColour * (0.6 * ruleMix * ruleRelief), ruleMix);
 
-  // Ink layer.
+  // Ink layer: ink pools in fibre valleys (low height) and skips high tooth.
   vec4 ink = sampleInk(uv);
-  vec3 outColour = paperWithRule * (1.0 - ink.a) + ink.rgb;
-  float outAlpha = 1.0 - (1.0 - paper.a) * (1.0 - ink.a);
+  float inkPool = mix(0.70, 1.0, clamp(0.25 - hPaper * 4.0, 0.0, 1.0));
+  float inkAlpha = ink.a * inkPool;
+  vec3 coloured = paperWithRule * (1.0 - inkAlpha) + ink.rgb * inkPool;
 
-  // Edge vignette.
+  // Text layer: coverage pools in fibre valleys, soft edge, lit like paper.
+  vec4 text = texture(u_textTex, clamp(uv, 0.0, 1.0));
+  float textCoverage = text.a;
+  // Slight ink bleed/spread (~0.4px) at glyph edges for a soft pen-like halo.
+  vec2 bleedStep = vec2(1.0 / u_resolution.x, 1.0 / u_resolution.y);
+  float bleed = max(text.a,
+    max(texture(u_textTex, clamp(uv + vec2(bleedStep.x, 0.0), 0.0, 1.0)).a,
+        texture(u_textTex, clamp(uv + vec2(-bleedStep.x, 0.0), 0.0, 1.0)).a));
+  bleed = max(bleed,
+    max(texture(u_textTex, clamp(uv + vec2(0.0, bleedStep.y), 0.0, 1.0)).a,
+        texture(u_textTex, clamp(uv + vec2(0.0, -bleedStep.y), 0.0, 1.0)).a));
+  textCoverage = max(textCoverage, bleed * 0.35);
+  float textAlpha = textCoverage * inkPool;
+  vec3 textColour = vec3(0.102, 0.227, 0.361); // ballpoint blue-black #1a3a5c
+  vec3 litText = textColour * lighting;
+  vec3 outColour = coloured * (1.0 - textAlpha) + litText * inkPool;
+  float outAlpha = 1.0;
+
+  // Edge vignette + thickness rim + directional curl.
   float d = distance(uv, vec2(0.5, 0.5));
   float vignette = 1.0 - smoothstep(0.55, 0.85, d) * 0.06;
-  outColour *= vignette;
+  float edgeDist = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+  float edgeRim = 1.0 - smoothstep(0.0, 0.05, edgeDist);
+  float edgeGlow = edgeRim * 0.05;
+  float curlDir = (uv.x - 0.5) + (uv.y - 0.5);
+  float curlShade = edgeRim * curlDir * 0.015;
+  outColour *= vignette * (1.0 + edgeGlow + curlShade);
 
   fragColor = vec4(outColour, outAlpha);
 }`;
@@ -330,6 +357,7 @@ export class WebGL2Renderer {
     // Resources
     this._paperFbo = null; this._paperTex = null;
     this._inkFbo = null; this._inkTex = null;
+    this._textFbo = null; this._textTex = null;
     this._quadVao = null; this._quadBuf = null;
     this._strokeVao = null; this._strokeBuf = null;
     this._strokeVertexCount = 0;
@@ -339,6 +367,10 @@ export class WebGL2Renderer {
     this._template = null; this._strokes = [];
     this._pen = PEN_MATERIALS.ballpoint;
     this._dirty = true;
+
+    // Text layer.
+    this._textImage = null;
+    this._textDirty = true;
   }
 
   get available() { return this._available && this._initialized; }
@@ -393,6 +425,7 @@ export class WebGL2Renderer {
         ambient: loc('u_ambient'),
         paperTex: loc('u_paperTex'),
         inkTex: loc('u_inkTex'),
+        textTex: loc('u_textTex'),
       };
     };
     this._paperLocs = u(this._paperProg);
@@ -428,6 +461,7 @@ export class WebGL2Renderer {
     if (this._paperTex) gl.deleteTexture(this._paperTex);
     if (this._inkFbo) gl.deleteFramebuffer(this._inkFbo);
     if (this._inkTex) gl.deleteTexture(this._inkTex);
+    if (this._textTex) gl.deleteTexture(this._textTex);
 
     const pf = createFbo(gl, w, h);
     this._paperFbo = pf.fbo;
@@ -438,6 +472,17 @@ export class WebGL2Renderer {
     const inf = createFbo(gl, w, h);
     this._inkFbo = inf.fbo;
     this._inkTex = inf.tex;
+
+    // Text layer texture (linear filtered for soft glyph edges).
+    const textTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, textTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    this._textTex = textTex;
 
     // Stroke geometry vertex buffer.
     const sbuf = gl.createBuffer();
@@ -476,6 +521,11 @@ export class WebGL2Renderer {
 
   setStrokes(strokes) { this._strokes = strokes || []; this._dirty = true; }
   setPen(pen) { this._pen = pen || PEN_MATERIALS.ballpoint; this._dirty = true; }
+
+  setTextImage(canvas) {
+    this._textImage = canvas;
+    this._textDirty = true;
+  }
 
   _uploadStrokes() {
     let total = 0;
@@ -524,14 +574,6 @@ export class WebGL2Renderer {
     if (!w || !h) return;
     this._createdResourcesForSize(gl, w, h);
 
-    // Write composite uniforms.
-    const lineSpacingPx = this._template ? MM_TO_PX * this._template.lineSpacingMm : 8 * 3.7795;
-    const lineWidthPx = this._template ? MM_TO_PX * this._template.lineWidthMm : 0.5 * 3.7795;
-    const lineOffsetPx = this._template ? MM_TO_PX * this._template.topMarginMm : 25 * 3.7795;
-    const marginXPx = this._template ? MM_TO_PX * this._template.marginMm : 25 * 3.7795;
-    const marginLineWidthPx = this._template ? MM_TO_PX * 1.2 : 1.2 * 3.7795;
-    this._writeUniforms(gl, w, h, lineSpacingPx, lineWidthPx, lineOffsetPx, marginXPx, marginLineWidthPx);
-
     // 1. Paper pass -> paper FBO.
     gl.bindFramebuffer(gl.FRAMEBUFFER, this._paperFbo);
     gl.viewport(0, 0, w, h);
@@ -560,18 +602,41 @@ export class WebGL2Renderer {
       gl.disable(gl.BLEND);
     }
 
+    // Text layer: upload the rasterized text canvas (only when it changes).
+    if (this._textDirty && this._textImage) {
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this._textTex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this._textImage);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      this._textDirty = false;
+    }
+
     // 3. Composite -> canvas.
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, w, h);
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this._compositeProg);
+
+    // Write composite uniforms now that the composite program is bound.
+    const lineSpacingPx = this._template ? MM_TO_PX * this._template.lineSpacingMm : 8 * 3.7795;
+    const lineWidthPx = this._template ? MM_TO_PX * DEFAULT_RULING.lineWidthMm : 0.5 * 3.7795;
+    const lineOffsetPx = this._template ? MM_TO_PX * this._template.topMarginMm : 25 * 3.7795;
+    const marginXPx = this._template ? MM_TO_PX * this._template.marginMm : 25 * 3.7795;
+    const marginLineWidthPx = this._template ? MM_TO_PX * 1.2 : 1.2 * 3.7795;
+    this._writeUniforms(gl, w, h, lineSpacingPx, lineWidthPx, lineOffsetPx, marginXPx, marginLineWidthPx);
+
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._paperTex);
     gl.uniform1i(this._compositeLocs.paperTex, 0);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._inkTex);
     gl.uniform1i(this._compositeLocs.inkTex, 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this._textTex);
+    gl.uniform1i(this._compositeLocs.textTex, 2);
     gl.bindVertexArray(this._quadVao);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindVertexArray(null);
@@ -583,96 +648,137 @@ export class WebGL2Renderer {
       throw new Error('gpu: renderer not available for export');
     }
     const gl = this._gl;
-    const sx = exportW / this._pageW;
-    const sy = exportH / this._pageH;
-    const w = Math.max(1, Math.floor(exportW));
-    const h = Math.max(1, Math.floor(exportH));
 
-    // Offscreen FBOs at export size.
-    const epf = createFbo(gl, w, h);
-    const eif = createFbo(gl, w, h);
+    // Clamp to device limits.
+    const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    const scale = Math.min(1, maxTex / exportW, maxTex / exportH);
+    let clampedW = exportW;
+    let clampedH = exportH;
+    if (scale < 1) {
+      clampedW = Math.floor(exportW * scale);
+      clampedH = Math.floor(exportH * scale);
+      this._onStatus('Export clamped to ' + clampedW + 'x' + clampedH);
+    }
 
-    const lineSpacingPx = this._template ? MM_TO_PX * this._template.lineSpacingMm * sy : 8 * 3.7795 * sy;
-    const lineWidthPx = this._template ? MM_TO_PX * this._template.lineWidthMm * sy : 0.5 * 3.7795 * sy;
-    const lineOffsetPx = this._template ? MM_TO_PX * this._template.topMarginMm * sy : 25 * 3.7795 * sy;
-    const marginXPx = this._template ? MM_TO_PX * this._template.marginMm * sx : 25 * 3.7795 * sx;
-    const marginLineWidthPx = this._template ? MM_TO_PX * 1.2 * sy : 1.2 * 3.7795 * sy;
+    const w = Math.max(1, Math.floor(clampedW));
+    const h = Math.max(1, Math.floor(clampedH));
 
-    // Paper at export size.
-    gl.bindFramebuffer(gl.FRAMEBUFFER, epf.fbo);
-    gl.viewport(0, 0, w, h);
-    gl.useProgram(this._paperProg);
-    gl.uniform2f(this._paperLocs.resolution, w, h);
-    gl.uniform1f(this._paperLocs.seed, Math.random());
-    gl.bindVertexArray(this._quadVao);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    // Save canvas and page dimensions.
+    const savedCanvasW = this._canvas.width;
+    const savedCanvasH = this._canvas.height;
+    const savedPageW = this._pageW;
+    const savedPageH = this._pageH;
 
-    // Ink at export size (scaled strokes).
-    const savedStrokes = this._strokes;
-    const savedCount = this._strokeVertexCount;
+    let blob = null;
     try {
-      const scaled = this._strokes.map(s => ({
-        ...s,
-        points: s.points.map(p => ({ x: p.x * sx, y: p.y * sy, t: p.t })),
-        width: s.width * Math.sqrt(sx * sy),
-      }));
-      this._strokes = scaled;
-      this._dirty = true;
-      if (this._dirty) this._uploadStrokes(gl);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, eif.fbo);
+      // Resize canvas to export size.
+      this._canvas.width = w;
+      this._canvas.height = h;
+
+      // Temporarily adopt export size for rendering.
+      this._pageW = w;
+      this._pageH = h;
+
+      // Recreate resources at export size.
+      this._createdResourcesForSize(gl, w, h);
+
+      // Scale uniforms for export resolution.
+      const sx = w / savedPageW;
+      const sy = h / savedPageH;
+      const lineSpacingPx = this._template ? MM_TO_PX * this._template.lineSpacingMm * sy : 8 * 3.7795 * sy;
+      const lineWidthPx = this._template ? MM_TO_PX * DEFAULT_RULING.lineWidthMm * sy : 0.5 * 3.7795 * sy;
+      const lineOffsetPx = this._template ? MM_TO_PX * this._template.topMarginMm * sy : 25 * 3.7795 * sy;
+      const marginXPx = this._template ? MM_TO_PX * this._template.marginMm * sx : 25 * 3.7795 * sx;
+      const marginLineWidthPx = this._template ? MM_TO_PX * 1.2 * sy : 1.2 * 3.7795 * sy;
+
+      // 1. Paper pass -> paper FBO at export size.
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._paperFbo);
       gl.viewport(0, 0, w, h);
-      gl.clearColor(0, 0, 0, 0);
+      gl.useProgram(this._paperProg);
+      gl.uniform2f(this._paperLocs.resolution, w, h);
+      gl.uniform1f(this._paperLocs.seed, Math.random());
+      gl.bindVertexArray(this._quadVao);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      // 2. Ink pass -> ink FBO at export size (scaled strokes).
+      const savedStrokes = this._strokes;
+      const savedCount = this._strokeVertexCount;
+      try {
+        const scaled = this._strokes.map(s => ({
+          ...s,
+          points: s.points.map(p => ({ x: p.x * sx, y: p.y * sy, t: p.t })),
+          width: s.width * Math.sqrt(sx * sy),
+        }));
+        this._strokes = scaled;
+        this._dirty = true;
+        if (this._dirty) this._uploadStrokes();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this._inkFbo);
+        gl.viewport(0, 0, w, h);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.useProgram(this._inkProg);
+        gl.uniform2f(this._inkLocs.resolution, w, h);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.bindVertexArray(this._strokeVao);
+        gl.drawArrays(gl.TRIANGLES, 0, this._strokeVertexCount);
+        gl.disable(gl.BLEND);
+      } finally {
+        this._strokes = savedStrokes;
+        this._strokeVertexCount = savedCount;
+      }
+
+      // 3. Composite -> canvas at export size.
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, w, h);
+      gl.clearColor(0, 0, 0, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.useProgram(this._inkProg);
-      gl.uniform2f(this._inkLocs.resolution, w, h);
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      gl.bindVertexArray(this._strokeVao);
-      gl.drawArrays(gl.TRIANGLES, 0, this._strokeVertexCount);
-      gl.disable(gl.BLEND);
+      gl.useProgram(this._compositeProg);
+      this._writeUniforms(gl, w, h, lineSpacingPx, lineWidthPx, lineOffsetPx, marginXPx, marginLineWidthPx);
+
+      // Text layer: upload the export-resolution text canvas (only when it changes).
+      if (this._textDirty && this._textImage) {
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, this._textTex);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this._textImage);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        this._textDirty = false;
+      }
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this._paperTex);
+      gl.uniform1i(this._compositeLocs.paperTex, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this._inkTex);
+      gl.uniform1i(this._compositeLocs.inkTex, 1);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this._textTex);
+      gl.uniform1i(this._compositeLocs.textTex, 2);
+      gl.bindVertexArray(this._quadVao);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      // Capture the frame while it is still on the canvas.
+      blob = await new Promise((resolve) => {
+        this._canvas.toBlob(resolve, 'image/png');
+      });
+      if (!blob) {
+        blob = await new Promise((resolve) => {
+          this._canvas.toBlob(resolve, 'image/jpeg', 0.95);
+        });
+      }
     } finally {
-      this._strokes = savedStrokes;
-      this._strokeVertexCount = savedCount;
+      // Restore on-screen canvas size and re-render.
+      this._pageW = savedPageW;
+      this._pageH = savedPageH;
+      this._canvas.width = savedCanvasW;
+      this._canvas.height = savedCanvasH;
+      this._createdResourcesForSize(gl, savedPageW, savedPageH);
+      this.render();
     }
 
-    // Composite to a third FBO for readback.
-    const eof = createFbo(gl, w, h);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, eof.fbo);
-    gl.viewport(0, 0, w, h);
-    gl.clearColor(0, 0, 0, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(this._compositeProg);
-    this._writeUniforms(gl, w, h, lineSpacingPx, lineWidthPx, lineOffsetPx, marginXPx, marginLineWidthPx);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, epf.tex);
-    gl.uniform1i(this._compositeLocs.paperTex, 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, eif.tex);
-    gl.uniform1i(this._compositeLocs.inkTex, 1);
-    gl.bindVertexArray(this._quadVao);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-    // Read pixels.
-    const pixels = new Uint8Array(w * h * 4);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-
-    // Restore display framebuffer + size.
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this._pageW, this._pageH);
-
-    // Cleanup export FBOs.
-    gl.deleteFramebuffer(epf.fbo); gl.deleteTexture(epf.tex);
-    gl.deleteFramebuffer(eif.fbo); gl.deleteTexture(eif.tex);
-    gl.deleteFramebuffer(eof.fbo); gl.deleteTexture(eof.tex);
-
-    // Flip vertically (WebGL origin bottom-left -> PNG top-left).
-    const rowBytes = w * 4;
-    const flipped = new Uint8Array(w * h * 4);
-    for (let y = 0; y < h; y++) {
-      flipped.set(pixels.subarray((h - 1 - y) * rowBytes, (h - 1 - y) * rowBytes + rowBytes), y * rowBytes);
-    }
-
-    return encodePng(flipped, w, h);
+    return blob;
   }
 
   resize() { this._dirty = true; }
@@ -695,71 +801,4 @@ export class WebGL2Renderer {
     this._initialized = false;
     this._available = false;
   }
-}
-
-/**
- * Dependency-free PNG encoder (CompressionStream, deflate-raw, stored fallback).
- * Mirrored from js/gpu/png.js so WebGL2 export is self-contained.
- */
-function encodePng(pixels, w, h) {
-  const CRC_TABLE = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-    CRC_TABLE[n] = c >>> 0;
-  }
-  function crc32(buf) {
-    let c = 0xFFFFFFFF;
-    for (let i = 0; i < buf.length; i++) c = (c >>> 8) ^ CRC_TABLE[(c ^ buf[i]) & 0xFF];
-    return (c ^ 0xFFFFFFFF) >>> 0;
-  }
-  function u32(v) { return [(v >>> 24) & 0xFF, (v >>> 16) & 0xFF, (v >>> 8) & 0xFF, v & 0xFF]; }
-  function chunk(type, data) {
-    const len = u32(data.length);
-    const crcInput = new Uint8Array([...type.split('').map((c) => c.charCodeAt(0)), ...data]);
-    const crc = u32(crc32(crcInput));
-    return [...len, ...crcInput, ...crc];
-  }
-  // Build raw deflate blocks (uncompressed stored blocks) to avoid zlib dependency.
-  // Split into 65535-byte stored blocks.
-  const rows = [];
-  for (let y = 0; y < h; y++) {
-    rows.push(0); // filter none
-    for (let x = 0; x < w * 4; x++) rows.push(pixels[y * w * 4 + x]);
-  }
-  const raw = new Uint8Array(rows);
-  const stored = [];
-  let i = 0;
-  while (i < raw.length) {
-    const block = raw.subarray(i, Math.min(i + 65535, raw.length));
-    const finalBlock = i + block.length >= raw.length ? 1 : 0;
-    // BFINAL(1) + BTYPE=00(0) stored block => 3 bits -> align to byte.
-    stored.push(finalBlock | 0x00); // byte 0: BFINAL + BTYPE 00
-    const len = block.length;
-    const nlen = (~len) & 0xFFFF;
-    stored.push(len & 0xFF, (len >>> 8) & 0xFF, nlen & 0xFF, (nlen >>> 8) & 0xFF);
-    stored.push(...Array.from(block));
-    i += block.length;
-  }
-  const adler = adler32(raw);
-  const idat = new Uint8Array(stored);
-  const adlerBytes = u32(adler);
-
-  const ihdr = u32(13).concat([73, 72, 68, 82], u32(w), u32(h), [8, 6, 0, 0, 0]);
-  const ihdrChunk = chunk('IHDR', ihdr);
-  const idatChunk = chunk('IDAT', Array.from(idat));
-  const iendChunk = chunk('IEND', []);
-  const signature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-  const all = new Uint8Array([...signature, ...ihdrChunk, ...idatChunk, adlerBytes[0], adlerBytes[1], adlerBytes[2], adlerBytes[3], ...iendChunk]);
-  return all;
-}
-
-function adler32(buf) {
-  let a = 1, b = 0;
-  const MOD = 65521;
-  for (let i = 0; i < buf.length; i++) {
-    a = (a + buf[i]) % MOD;
-    b = (b + a) % MOD;
-  }
-  return (b << 16) | a;
 }

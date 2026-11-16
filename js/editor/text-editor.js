@@ -25,12 +25,37 @@
  */
 
 import { mmToPx, snapPx } from '../units.js';
+import { findFractions } from '../typography/typography.js';
+
+/**
+ * Extract plain text from a contentEditable element, converting structural
+ * elements (BR, DIV, P) into newline characters so the returned string
+ * matches what layoutText expects.
+ * @param {HTMLElement} el
+ * @returns {string}
+ */
+function domText(el) {
+  let out = '';
+  for (const node of el.childNodes) {
+    if (node.nodeType === 3) {
+      out += node.textContent;
+    } else if (node.nodeType === 1) {
+      if (node.tagName === 'BR') out += '\n';
+      else if (node.tagName === 'DIV' || node.tagName === 'P') out += '\n';
+      out += domText(node);
+    }
+  }
+  return out;
+}
 
 /**
  * Editor configuration.
  * @typedef {Object} EditorConfig
  * @property {number} writeWidthPx - Writing area width in CSS px
  * @property {number} writeHeightPx - Writing area height in CSS px
+ * @property {number} originXPx - Writing area origin X in CSS px (left margin)
+ * @property {number} originYPx - Writing area origin Y in CSS px (top margin / first rule)
+ * @property {number} baselineOffsetPx - Approximate font ascent so glyph baseline sits on the first rule
  * @property {number} lineHeightPx - Line height in CSS px (for overflow estimation)
  * @property {string} fontFamily - CSS font-family string
  * @property {number} fontSizePx - Font size in CSS px
@@ -52,7 +77,12 @@ export class TextEditor {
    */
   constructor(config, callbacks = {}) {
     this._el = null;
-    this._config = config;
+    this._config = {
+      originXPx: 0,
+      originYPx: 0,
+      baselineOffsetPx: 0,
+      ...config,
+    };
     this._callbacks = callbacks;
     this._onInputBound = this._onInput.bind(this);
     this._onFocusBound = this._onFocus.bind(this);
@@ -83,24 +113,29 @@ export class TextEditor {
 
     // Constrain text to the writing area. width is set explicitly so text
     // wraps at the right margin; height auto-grows so we can measure overflow.
+    // Positioned at the writing area origin (inside margins). top is shifted
+    // up by baselineOffsetPx so the glyph baseline (not the line-box top)
+    // lands on the first ruling line.
     this._el.style.position = 'absolute';
-    this._el.style.top = '0';
-    this._el.style.left = '0';
+    this._el.style.top = snapPx(this._config.originYPx - this._config.baselineOffsetPx) + 'px';
+    this._el.style.left = snapPx(this._config.originXPx) + 'px';
     this._el.style.width = snapPx(this._config.writeWidthPx) + 'px';
     this._el.style.minHeight = snapPx(this._config.writeHeightPx) + 'px';
     this._el.style.maxHeight = snapPx(this._config.writeHeightPx) + 'px';
     this._el.style.overflowY = 'hidden';
     this._el.style.boxSizing = 'border-box';
 
-    // Typography: Myanmar-capable font stack, pre-wrap for phrase spaces/ZWSP.
+    // Typography: chosen handwriting font. The editor is invisible
+    // (transparent text and caret) — it exists only for keyboard/IME input;
+    // the visible text and caret are rendered on the GPU layer.
     this._el.style.fontFamily = this._config.fontFamily;
     this._el.style.fontSize = snapPx(this._config.fontSizePx) + 'px';
     this._el.style.lineHeight = snapPx(this._config.lineHeightPx) + 'px';
     this._el.style.whiteSpace = 'pre-wrap';
     this._el.style.wordWrap = 'break-word';
     this._el.style.overflowWrap = 'anywhere';
-    this._el.style.color = '#111827';
-    this._el.style.caretColor = '#111827';
+    this._el.style.color = 'transparent';
+    this._el.style.caretColor = 'transparent';
     this._el.style.outline = 'none';
 
     // Disabled by default — enabled when text mode is active.
@@ -110,6 +145,47 @@ export class TextEditor {
     this._el.addEventListener('input', this._onInputBound);
     this._el.addEventListener('focus', this._onFocusBound);
     this._el.addEventListener('blur', this._onBlurBound);
+
+    // Fraction backspace: when caret is right after a fraction (digit/digit),
+    // one Backspace removes the whole fraction, not just one character.
+    this._el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Backspace') return;
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const offset = this.caretOffset();
+      const text = domText(this._el);
+      const fractions = findFractions(text);
+      // Caret is right after a fraction end → delete the whole fraction.
+      for (const f of fractions) {
+        if (offset === f.end) {
+          e.preventDefault();
+          this._el.textContent = text.slice(0, f.start) + text.slice(f.end);
+          // Move caret to fraction start.
+          const range = document.createRange();
+          const sel2 = window.getSelection();
+          // Walk to f.start to place caret.
+          let walked = 0;
+          const walk = (node) => {
+            if (node.nodeType === 3) {
+              const next = walked + node.textContent.length;
+              if (f.start <= next) {
+                sel2.setBaseAndExtent(node, f.start - walked, node, f.start - walked);
+                return true;
+              }
+              walked = next;
+            } else if (node.nodeType === 1) {
+              for (const child of node.childNodes) {
+                if (walk(child)) return true;
+              }
+            }
+            return false;
+          };
+          for (const child of this._el.childNodes) walk(child);
+          this._onInput();
+          return;
+        }
+      }
+    });
 
     container.appendChild(this._el);
     return this;
@@ -137,7 +213,7 @@ export class TextEditor {
    */
   text(value) {
     if (arguments.length === 0) {
-      return this._el ? this._el.textContent : '';
+      return this._el ? domText(this._el) : '';
     }
     if (this._el) {
       this._el.textContent = value;
@@ -152,6 +228,42 @@ export class TextEditor {
     if (this._el && this._enabled) {
       this._el.focus();
     }
+  }
+
+  /**
+   * Best-effort caret offset (char index within the editor's text content).
+   * Used to place the GPU caret at the same position the input caret would be.
+   * @returns {number} Caret offset
+   */
+  caretOffset() {
+    if (!this._el) return 0;
+    const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
+    if (!sel || sel.rangeCount === 0) return domText(this._el).length;
+    const range = sel.getRangeAt(0);
+    const container = range.startContainer;
+    if (!container || !this._el.contains(container)) return domText(this._el).length;
+    let offset = 0;
+    let hit = false;
+    const walk = (node) => {
+      if (hit) return;
+      if (node === container) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          offset += range.startOffset;
+        }
+        hit = true;
+        return;
+      }
+      if (node.nodeType === 3) {
+        offset += node.textContent.length;
+      } else if (node.nodeType === 1) {
+        if (node.tagName === 'BR' || node.tagName === 'DIV' || node.tagName === 'P') {
+          offset += 1;
+        }
+        for (const child of node.childNodes) walk(child);
+      }
+    };
+    for (const child of this._el.childNodes) walk(child);
+    return hit ? offset : domText(this._el).length;
   }
 
   /**
@@ -231,10 +343,7 @@ export class TextEditor {
 
   _onInput() {
     if (this._callbacks.onInput) {
-      this._callbacks.onInput(this._el.textContent);
-    }
-    if (this._callbacks.onOverflow && this.isOverflowing()) {
-      this._callbacks.onOverflow();
+      this._callbacks.onInput(domText(this._el));
     }
   }
 

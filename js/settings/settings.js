@@ -5,6 +5,8 @@ const DEFAULTS = {
   'typography.fontFamily': "'Noto Serif Myanmar','Noto Sans Myanmar','Myanmar Text','Segoe UI Symbol',Arial,sans-serif",
   'typography.fontSize': '18px',
   'typography.lineHeight': 1.6,
+  'typography.font.english': 'handlee',
+  'typography.font.myanmar': 'padauk',
   'storage.key': 'notebook:v1',
   'storage.version': 1,
   'ui.mode': 'text',

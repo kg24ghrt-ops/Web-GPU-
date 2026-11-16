@@ -1,10 +1,24 @@
 import { PageManager } from '../pages/pages.js';
+import { DEFAULT_FONT } from '../typography/typography.js';
 export class Notebook {
-  constructor({ title = 'Notebook', pages, strokesByPage, textByPage } = {}) {
+  constructor({ title = 'Notebook', pages, strokesByPage, textByPage, fontSettings } = {}) {
     this.title = title;
     this.pages = pages || new PageManager();
     this.strokesByPage = new Map(strokesByPage || []);
     this.textByPage = new Map(textByPage || []);
+    this.fontSettings = { ...DEFAULT_FONT, ...(fontSettings || {}) };
+  }
+
+  fontChoice(script) {
+    return this.fontSettings && this.fontSettings[script]
+      ? this.fontSettings[script]
+      : DEFAULT_FONT[script];
+  }
+
+  setFontChoice(script, id) {
+    this.fontSettings = { ...this.fontSettings, [script]: id };
+    this.pages.get(this.currentPage().id).touch();
+    return this;
   }
   addPage(page) { this.pages.add(page); return page; }
   createPage(opts) { return this.pages.create(opts); }
@@ -26,12 +40,14 @@ export class Notebook {
       pages: this.pages.toJSON(),
       strokesByPage: Object.fromEntries(this.strokesByPage),
       textByPage: Object.fromEntries(this.textByPage),
+      fontSettings: this.fontSettings,
     };
   }
   static fromJSON(json) {
     const pages = PageManager.fromJSON(json && json.pages);
     const strokesByPage = new Map(Object.entries((json && json.strokesByPage) || {}));
     const textByPage = new Map(Object.entries((json && json.textByPage) || {}));
-    return new Notebook({ title: json && json.title, pages, strokesByPage, textByPage });
+    const fontSettings = json && json.fontSettings ? { ...DEFAULT_FONT, ...json.fontSettings } : { ...DEFAULT_FONT };
+    return new Notebook({ title: json && json.title, pages, strokesByPage, textByPage, fontSettings });
   }
 }
