@@ -74,17 +74,17 @@ fn ambientOcclusion(uv: vec2<f32>) -> f32 {
   let h0 = sampleHeight(uv);
   var ao = 0.0;
   var weight = 1.0;
-  var step = 1.0;
+  var aoStep = 1.0;
   for (var i = 0; i < 4; i++) {
     let angle = f32(i) * 1.5708;
     let dir = vec2<f32>(cos(angle), sin(angle));
-    let p = uv + dir * step * 1.0 / dims();
+    let p = uv + dir * aoStep * 1.0 / dims();
     let hd = sampleHeight(p);
     if (hd < h0) {
       ao += (h0 - hd) * weight;
     }
     weight *= 0.5;
-    step *= 2.0;
+    aoStep *= 2.0;
   }
   return clamp(ao * 0.5, 0.0, 1.0);
 }

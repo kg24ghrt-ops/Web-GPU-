@@ -7,7 +7,7 @@ import { Notebook } from './notebook/notebook.js';
 import { mmToPx } from './units.js';
 import { getTemplate, listTemplates } from './paper/templates.js';
 import { getPaperSize } from './paper/sizes.js';
-import { ensureFonts, FONT_SPEC, FONT_SIZE, loadFonts, resolveFont, fontIdForScript, DEFAULT_FONT, layoutText, containsMyanmar } from './typography/typography.js';
+import { ensureFonts, FONT_SPEC, FONT_SIZE, loadFonts, resolveFont, fontIdForScript, DEFAULT_FONT, layoutText, containsMyanmar, caretOffsetFromX } from './typography/typography.js';
 import { createTextCanvas, rasterizeText, caretAt } from './gpu/text-layer.js';
 import { TextEditor } from './editor/text-editor.js';
 import { Stroke } from './handwriting/handwriting.js';
@@ -150,13 +150,14 @@ function writingAreaRect(template, paperSize, pageW, pageH) {
   const topPx = mmToPx(template.topMarginMm);
   const bottomPx = mmToPx(template.bottomMarginMm);
   const bindingPx = mmToPx(template.bindingMarginMm || 0);
-  const leftX = marginPx + bindingPx + mmToPx(3);
+  const leftX = mmToPx(3);
   return {
     x: leftX,
     y: topPx,
-    // Writable width runs from the left writing edge to the page's right edge,
-    // minus about 3 mm (right buffer). Do not subtract the left margin twice.
-    w: pageW - leftX - mmToPx(3),
+    // Writable area: full page width minus about 3 mm at each edge.
+    // The margin line is a visual guide only — it does not block, wrap,
+    // clip or move typed text.
+    w: pageW - mmToPx(3) - mmToPx(3),
     h: pageH - topPx - bottomPx,
   };
 }
@@ -256,14 +257,16 @@ async function renderPage(page) {
   renderer.setStrokes(strokes);
   await renderer.render();
 
-  // Tap/click snaps the caret to the nearest ruled row (no logging).
+  // Tap/click snaps the caret to the nearest ruled row and character boundary (no logging).
   pageEl.addEventListener('click', (e) => {
     if (!currentText || !textEditor) return;
     const r = pageEl.getBoundingClientRect();
+    const px = e.clientX - r.left;
     const py = e.clientY - r.top;
     const rowIdx = Math.round((py - currentText.originY) / currentText.lineHeightPx);
     const clamped = Math.max(0, Math.min(rowIdx, currentText.lines.length - 1));
-    const targetOffset = currentText.lines[clamped].start;
+    const line = currentText.lines[clamped];
+    const targetOffset = caretOffsetFromX(currentText.text, currentText.fontSpec, currentText.originX, line.start, line.end, px);
     const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
     if (!sel) return;
     // Walk text nodes to find the character offset targetOffset.

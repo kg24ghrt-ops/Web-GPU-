@@ -25,6 +25,7 @@
  */
 
 import { mmToPx, snapPx } from '../units.js';
+import { findFractions } from '../typography/typography.js';
 
 /**
  * Extract plain text from a contentEditable element, converting structural
@@ -144,6 +145,47 @@ export class TextEditor {
     this._el.addEventListener('input', this._onInputBound);
     this._el.addEventListener('focus', this._onFocusBound);
     this._el.addEventListener('blur', this._onBlurBound);
+
+    // Fraction backspace: when caret is right after a fraction (digit/digit),
+    // one Backspace removes the whole fraction, not just one character.
+    this._el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Backspace') return;
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const offset = this.caretOffset();
+      const text = domText(this._el);
+      const fractions = findFractions(text);
+      // Caret is right after a fraction end → delete the whole fraction.
+      for (const f of fractions) {
+        if (offset === f.end) {
+          e.preventDefault();
+          this._el.textContent = text.slice(0, f.start) + text.slice(f.end);
+          // Move caret to fraction start.
+          const range = document.createRange();
+          const sel2 = window.getSelection();
+          // Walk to f.start to place caret.
+          let walked = 0;
+          const walk = (node) => {
+            if (node.nodeType === 3) {
+              const next = walked + node.textContent.length;
+              if (f.start <= next) {
+                sel2.setBaseAndExtent(node, f.start - walked, node, f.start - walked);
+                return true;
+              }
+              walked = next;
+            } else if (node.nodeType === 1) {
+              for (const child of node.childNodes) {
+                if (walk(child)) return true;
+              }
+            }
+            return false;
+          };
+          for (const child of this._el.childNodes) walk(child);
+          this._onInput();
+          return;
+        }
+      }
+    });
 
     container.appendChild(this._el);
     return this;

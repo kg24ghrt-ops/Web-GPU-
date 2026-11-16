@@ -71,11 +71,13 @@ export function createTextCanvas(w, h) {
 /**
  * Draw a run of clusters at (x, y). Myanmar runs are drawn whole to preserve
  * complex-script shaping; Latin runs are drawn cluster-by-cluster with
- * per-glyph density variation. Returns the advance x after the run.
+ * per-glyph density variation. Fractions (digit/digit) are rendered as stacked
+ * glyphs: numerator above, slanted bar, denominator below.
  * @param {CanvasRenderingContext2D} ctx
- * @param {string} text - Full line text (for slicing Myanmar runs)
+ * @param {string} text - Full line text (for slicing runs)
  * @param {number} x - Current x position
  * @param {number} y - Baseline y
+ * @param {number} lineHeightPx - Line height for fraction stacking
  * @param {Array} clusters - Grapheme clusters of the line
  * @param {number} startIdx - First cluster index of the run
  * @param {number} endIdx - One-past-last cluster index of the run
@@ -83,7 +85,7 @@ export function createTextCanvas(w, h) {
  * @param {number} clusterIdx - Running cluster index (for density hash)
  * @returns {{x: number, clusterIdx: number}}
  */
-function drawRun(ctx, text, x, y, clusters, startIdx, endIdx, myanmar, clusterIdx) {
+function drawRun(ctx, text, x, y, lineHeightPx, clusters, startIdx, endIdx, myanmar, clusterIdx) {
   if (myanmar) {
     // Draw the whole Myanmar run at once so shaping (stacking, reordering)
     // is preserved and clusters are never split ("don't break the knees").
@@ -91,6 +93,16 @@ function drawRun(ctx, text, x, y, clusters, startIdx, endIdx, myanmar, clusterId
     ctx.fillText(runText, x, y);
     const gw = ctx.measureText(runText).width;
     return { x: x + gw, clusterIdx: clusterIdx + (endIdx - startIdx) };
+  }
+
+  // Check if this run is a fraction: digit / digit (3 clusters: num, /, den).
+  if (endIdx - startIdx === 3) {
+    const c0 = clusters[startIdx].text;
+    const c1 = clusters[startIdx + 1].text;
+    const c2 = clusters[startIdx + 2].text;
+    if (/\d/.test(c0) && c1 === '/' && /\d/.test(c2)) {
+      return drawFraction(ctx, c0, c2, x, y, lineHeightPx, clusterIdx);
+    }
   }
 
   // Latin: draw cluster-by-cluster with realistic handwriting variation:
@@ -122,6 +134,65 @@ function drawRun(ctx, text, x, y, clusters, startIdx, endIdx, myanmar, clusterId
     clusterIdx++;
   }
   return { x, clusterIdx };
+}
+
+/**
+ * Render a stacked fraction a/b: numerator above, slanted bar, denominator below.
+ * All within one row height, scaled to ~70%.
+ * @returns {{x: number, clusterIdx: number}}
+ */
+function drawFraction(ctx, num, den, x, y, lineHeightPx, clusterIdx) {
+  const scale = 0.70;
+  const fontSizePx = parseFloat(ctx.font) || 18;
+  const scaledSize = fontSizePx * scale;
+
+  // Measure at full size, scale down for fraction (measureText scales linearly).
+  const numW = ctx.measureText(num).width * scale;
+  const denW = ctx.measureText(den).width * scale;
+  const barW = Math.max(numW, denW) * 1.25;
+  const barH = 2;
+
+  // Ink realism: per-fraction variation (seeded by position).
+  const density = GLYPH_DENSITY_MIN + glyphHash(x, y, clusterIdx) * (GLYPH_DENSITY_MAX - GLYPH_DENSITY_MIN);
+  const drift = BASELINE_DRIFT_MIN + glyphHash(x + 1, y + 7, clusterIdx) * (BASELINE_DRIFT_MAX - BASELINE_DRIFT_MIN);
+  const slantDeg = SLANT_MIN + glyphHash(x + 2, y + 13, clusterIdx) * (SLANT_MAX - SLANT_MIN);
+  const size = SIZE_MIN + glyphHash(x + 3, y + 19, clusterIdx) * (SIZE_MAX - SIZE_MIN);
+  const pressure = PRESSURE_MIN + glyphHash(x + 4, y + 25, clusterIdx) * (PRESSURE_MAX - PRESSURE_MIN);
+  const slantRad = (slantDeg * Math.PI) / 180.0;
+
+  const numY = y - scaledSize * 0.7 + drift;
+  const barY = y + drift;
+  const denY = y + scaledSize * 0.7 + drift;
+
+  // Numerator (right-aligned over bar).
+  ctx.save();
+  ctx.translate(x + barW - numW, numY);
+  ctx.rotate(slantRad);
+  ctx.scale(size, size);
+  ctx.globalAlpha = density * pressure;
+  ctx.fillText(num, 0, 0);
+  ctx.restore();
+
+  // Slanted bar.
+  ctx.save();
+  ctx.translate(x, barY);
+  ctx.rotate(slantRad);
+  ctx.globalAlpha = density * pressure;
+  ctx.fillRect(0, -barH / 2, barW, barH);
+  ctx.restore();
+
+  // Denominator (right-aligned under bar).
+  ctx.save();
+  ctx.translate(x + barW - denW, denY);
+  ctx.rotate(slantRad);
+  ctx.scale(size, size);
+  ctx.globalAlpha = density * pressure;
+  ctx.fillText(den, 0, 0);
+  ctx.restore();
+
+  ctx.restore();
+
+  return { x: x + barW, clusterIdx: clusterIdx + 3 };
 }
 
 /**
@@ -165,7 +236,7 @@ export function rasterizeText(canvas, text, fontSpec, widthPx, lineHeightPx, ori
       const cMy = isMyanmarCluster(clusters[j].text);
       if (cMy !== runIsMy) {
         // End current run, start a new one.
-        const res = drawRun(ctx, line.text, x, y, clusters, runStart, j, runIsMy, clusterIdx);
+        const res = drawRun(ctx, line.text, x, y, lineHeightPx, clusters, runStart, j, runIsMy, clusterIdx);
         x = res.x;
         clusterIdx = res.clusterIdx;
         runStart = j;
@@ -174,7 +245,7 @@ export function rasterizeText(canvas, text, fontSpec, widthPx, lineHeightPx, ori
     }
     // Draw the final run.
     if (clusters.length > 0) {
-      const res = drawRun(ctx, line.text, x, y, clusters, runStart, clusters.length, runIsMy, clusterIdx);
+      const res = drawRun(ctx, line.text, x, y, lineHeightPx, clusters, runStart, clusters.length, runIsMy, clusterIdx);
       x = res.x;
     }
 

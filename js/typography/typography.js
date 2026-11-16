@@ -187,6 +187,53 @@ function measureText(text, fontSpec) {
 // The break happens AFTER the punctuation character (it stays on the current line).
 const BREAK_CHARS = /[\u0020\u200B\u104A\u104B]/;
 
+/** Fraction pattern: digits, slash, digits (e.g. "1/2", "3/4"). */
+const FRACTION_PATTERN = /(\d+)\/(\d+)/g;
+
+/**
+ * Find all fraction ranges in text. Returns array of {start, end, numerator,
+ * denominator} where start/end are character offsets in the full text.
+ */
+export function findFractions(text) {
+  const fractions = [];
+  FRACTION_PATTERN.lastIndex = 0;
+  let m;
+  while ((m = FRACTION_PATTERN.exec(text)) !== null) {
+    fractions.push({
+      start: m.index,
+      end: m.index + m[0].length,
+      numerator: m[1],
+      denominator: m[2],
+      text: m[0],
+    });
+  }
+  return fractions;
+}
+
+/** True if a character offset falls inside a fraction range. */
+export function isInFraction(fractions, offset) {
+  for (const f of fractions) {
+    if (offset > f.start && offset < f.end) return true;
+  }
+  return false;
+}
+
+/** True if a character offset is at a fraction boundary (start or end). */
+export function isFractionBoundary(fractions, offset) {
+  for (const f of fractions) {
+    if (offset === f.start || offset === f.end) return true;
+  }
+  return false;
+}
+
+/** Get the fraction that starts at a given offset, or null. */
+export function fractionAt(fractions, offset) {
+  for (const f of fractions) {
+    if (f.start === offset) return f;
+  }
+  return null;
+}
+
 export function graphemeClusters(text) {
   const clusters = [];
   if (typeof Intl !== 'undefined' && Intl.Segmenter) {
@@ -220,6 +267,7 @@ export function graphemeClusters(text) {
 function wrapHard(text, widthPx, font) {
   if (text.length === 0) return [{ text: '', width: 0, start: 0, end: 0 }];
   const clusters = graphemeClusters(text);
+  const fractions = findFractions(text);
   const lines = [];
   let lineStart = 0;          // character offset where current line begins
   let lineText = '';
@@ -229,10 +277,6 @@ function wrapHard(text, widthPx, font) {
   let lastBreakWidth = 0;
 
   // Script-run tracking for mixed-script lines.
-  // baseWidth  = locked-in width of all completed script runs before current run
-  // runStart   = character offset where current script run begins
-  // runIsMy    = whether current run is Myanmar
-  // runWidth   = width of current script run (measured appropriately per script)
   let baseWidth = 0;
   let runStart = 0;
   let runIsMy = false;
@@ -241,6 +285,47 @@ function wrapHard(text, widthPx, font) {
   let i = 0;
   while (i < clusters.length) {
     const c = clusters[i];
+
+    // If this cluster starts a fraction, treat the entire fraction as one
+    // atomic unit — cannot break inside a fraction.
+    const f = fractionAt(fractions, c.start);
+    if (f) {
+      const fWidth = measureText(f.text, font);
+      const trialWidth = baseWidth + runWidth + fWidth;
+      if (trialWidth <= widthPx || lineText === '') {
+        lineText += f.text;
+        lineWidth = trialWidth;
+        i = clusters.findIndex(cl => cl.start >= f.end);
+        if (i === -1) i = clusters.length;
+      } else if (lastBreak > lineStart) {
+        const breakTarget = lastBreak;
+        lines.push({ text: lastBreakText, width: lastBreakWidth, start: lineStart, end: breakTarget });
+        lineStart = breakTarget;
+        lineText = '';
+        lineWidth = 0;
+        lastBreak = -1;
+        baseWidth = 0;
+        runStart = lineStart;
+        runIsMy = false;
+        runWidth = 0;
+        i = clusters.findIndex(cl => cl.start >= breakTarget);
+        if (i === -1) i = clusters.length;
+      } else {
+        lines.push({ text: lineText, width: lineWidth, start: lineStart, end: c.start });
+        lineStart = c.start;
+        lineText = f.text;
+        lineWidth = fWidth;
+        lastBreak = -1;
+        baseWidth = 0;
+        runStart = f.end;
+        runIsMy = false;
+        runWidth = 0;
+        i = clusters.findIndex(cl => cl.start >= f.end);
+        if (i === -1) i = clusters.length;
+      }
+      continue;
+    }
+
     const cMy = isMyanmarCluster(c.text);
 
     // When script changes, lock in the previous run and start a new one.
@@ -346,9 +431,17 @@ export function layoutText(text, fontSpec, widthPx) {
  * @returns {Object} { x, y, lineIndex, lineHeightPx } or null when offset is out of range.
  */
 export function caretPosition(text, fontSpec, widthPx, lineHeightPx, originX, originY, offset) {
+  const fractions = findFractions(text);
   const { lines } = layoutText(text, fontSpec, widthPx);
   const n = String(text).length;
-  const o = Math.min(Math.max(offset, 0), n);
+  // Snap offsets inside a fraction to the fraction boundary (treat fraction as one unit).
+  let o = Math.min(Math.max(offset, 0), n);
+  if (!isFractionBoundary(fractions, o) && isInFraction(fractions, o)) {
+    // Inside a fraction: snap to the nearest boundary.
+    const f = fractionAt(fractions, findFractions(text).reduce((prev, cur) =>
+      cur.start <= o ? cur : prev, null));
+    if (f && o - f.start <= f.end - o) o = f.start; else o = f.end;
+  }
   let lineIndex = 0;
   let target = null;
   for (let i = 0; i < lines.length; i++) {
@@ -364,4 +457,47 @@ export function caretPosition(text, fontSpec, widthPx, lineHeightPx, originX, or
   const x = originX + measureText(before, fontSpec);
   const y = originY + lineIndex * lineHeightPx;
   return { x, y, lineIndex, lineHeightPx };
+}
+
+/**
+ * Find the character offset closest to a given x position on a given line,
+ * for free horizontal caret placement. Measures each cluster prefix and
+ * returns the offset whose rendered x is nearest to the click x.
+ * @param {string} text - Full text
+ * @param {Object} fontSpec - { family, sizePx }
+ * @param {number} originX - Writing area origin X in CSS px
+ * @param {number} lineStart - Character offset where the line begins
+ * @param {number} lineEnd - Character offset where the line ends
+ * @param {number} clickX - Click x position in CSS px
+ * @returns {number} Character offset closest to clickX
+ */
+export function caretOffsetFromX(text, fontSpec, originX, lineStart, lineEnd, clickX) {
+  const fractions = findFractions(text);
+  const targetX = clickX - originX;
+  let bestOffset = lineStart;
+  let bestDist = Infinity;
+  let measuredX = 0;
+  let o = lineStart;
+  while (o <= lineEnd) {
+    const f = fractionAt(fractions, o);
+    let segmentText;
+    let nextO;
+    if (f) {
+      segmentText = f.text;
+      nextO = f.end;
+    } else {
+      segmentText = String(text)[o];
+      nextO = o + 1;
+    }
+    const segWidth = measureText(segmentText, fontSpec);
+    const segCenterX = measuredX + segWidth / 2;
+    const dist = Math.abs(segCenterX - targetX);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestOffset = f ? f.start : o;
+    }
+    measuredX += segWidth;
+    o = nextO;
+  }
+  return bestOffset;
 }
