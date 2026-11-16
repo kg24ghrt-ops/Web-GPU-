@@ -243,7 +243,8 @@ async function renderPage(page) {
   renderer.setTextImage(textCanvas);
   currentText = {
     text: pageText, fontSpec, widthPx: area.w, lineHeightPx,
-    originX: area.x, originY: area.y, caretOffset, lines: layout.lines,
+    originX: area.x, originY: area.y, lineOffsetPx: area.y, lineSpacingPx: lineHeightPx,
+    caretOffset, lines: layout.lines,
   };
 
   renderer.setDocument({
@@ -370,9 +371,9 @@ function handleOverflow() {
 
 function redrawTextLayer() {
   if (!currentText || !renderer || !renderer.available || !textCanvas) return;
-  const { text, fontSpec, widthPx, lineHeightPx, originX, originY, caretOffset } = currentText;
+  const { text, fontSpec, widthPx, lineHeightPx, lineOffsetPx, lineSpacingPx, originX, originY, caretOffset } = currentText;
   const caretPos = caretAt(text, fontSpec, widthPx, lineHeightPx, originX, originY, caretOffset);
-  rasterizeText(textCanvas, text, fontSpec, widthPx, lineHeightPx, originX, originY,
+  rasterizeText(textCanvas, text, fontSpec, widthPx, lineHeightPx, lineOffsetPx, lineSpacingPx, originX, originY,
     caretPos ? caretPos.x : null, caretPos ? caretPos.y : null, caretVisible);
   renderer.setTextImage(textCanvas);
   renderer.render();
