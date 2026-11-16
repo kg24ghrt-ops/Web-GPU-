@@ -238,7 +238,7 @@ async function renderPage(page) {
   const layout = layoutText(pageText, fontSpec, area.w);
   const caretOffset = 0;
   const caretPos = caretAt(pageText, fontSpec, area.w, lineHeightPx, area.x, area.y, caretOffset);
-  rasterizeText(textCanvas, pageText, fontSpec, area.w, lineHeightPx, area.x, area.y,
+  rasterizeText(textCanvas, pageText, fontSpec, area.w, lineHeightPx, area.y, lineHeightPx, area.x, area.y,
     caretPos ? caretPos.x : null, caretPos ? caretPos.y : null, caretVisible);
   renderer.setTextImage(textCanvas);
   currentText = {
@@ -545,6 +545,7 @@ async function exportPng() {
       const scaledFont = { ...displayText.fontSpec, sizePx: displayText.fontSpec.sizePx * scale };
       rasterizeText(exportCanvas, displayText.text, scaledFont,
         displayText.widthPx * sx, displayText.lineHeightPx * sy,
+        displayText.originY * sy, displayText.lineHeightPx * sy,
         displayText.originX * sx, displayText.originY * sy,
         displayText.caretOffset != null ? (displayText.caretX != null ? displayText.caretX * sx : null) : null,
         displayText.caretLineY != null ? displayText.caretLineY * sy : null,

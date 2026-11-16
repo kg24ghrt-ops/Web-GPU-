@@ -85,7 +85,7 @@ export function createTextCanvas(w, h) {
  * @param {number} clusterIdx - Running cluster index (for density hash)
  * @returns {{x: number, clusterIdx: number}}
  */
-function drawRun(ctx, text, x, y, lineHeightPx, clusters, startIdx, endIdx, myanmar, clusterIdx) {
+function drawRun(ctx, text, x, y, lineHeightPx, lineOffsetPx, lineSpacingPx, clusters, startIdx, endIdx, myanmar, clusterIdx) {
   if (myanmar) {
     // Draw the whole Myanmar run at once so shaping (stacking, reordering)
     // is preserved and clusters are never split ("don't break the knees").
@@ -101,7 +101,7 @@ function drawRun(ctx, text, x, y, lineHeightPx, clusters, startIdx, endIdx, myan
     const c1 = clusters[startIdx + 1].text;
     const c2 = clusters[startIdx + 2].text;
     if (/\d/.test(c0) && c1 === '/' && /\d/.test(c2)) {
-      return drawFraction(ctx, c0, c2, x, y, lineHeightPx, clusterIdx);
+      return drawFraction(ctx, c0, c2, x, y, lineHeightPx, lineOffsetPx, lineSpacingPx, clusterIdx);
     }
   }
 
@@ -138,11 +138,12 @@ function drawRun(ctx, text, x, y, lineHeightPx, clusters, startIdx, endIdx, myan
 
 /**
  * Render a stacked fraction a/b: numerator above, slanted bar, denominator below.
- * All within one row height, scaled to ~70%.
+ * The bar sits exactly on the nearest ruled line (computed from lineOffsetPx and
+ * lineSpacingPx, the same values the ruling shader uses).
  * @returns {{x: number, clusterIdx: number}}
  */
-function drawFraction(ctx, num, den, x, y, lineHeightPx, clusterIdx) {
-  const scale = 0.70;
+function drawFraction(ctx, num, den, x, y, lineHeightPx, lineOffsetPx, lineSpacingPx, clusterIdx) {
+  const scale = 0.68;
   const fontSizePx = parseFloat(ctx.font) || 18;
   const scaledSize = fontSizePx * scale;
 
@@ -150,19 +151,22 @@ function drawFraction(ctx, num, den, x, y, lineHeightPx, clusterIdx) {
   const numW = ctx.measureText(num).width * scale;
   const denW = ctx.measureText(den).width * scale;
   const barW = Math.max(numW, denW) * 1.25;
-  const barH = 2;
+  const barH = 1.2;
+
+  // Snap barY to the nearest ruled line (same rule computation as the shader).
+  const ruleY = lineOffsetPx + Math.round((y - lineOffsetPx) / lineSpacingPx) * lineSpacingPx;
+  const barY = ruleY; // drift = 0: bar sits exactly on the rule
 
   // Ink realism: per-fraction variation (seeded by position).
   const density = GLYPH_DENSITY_MIN + glyphHash(x, y, clusterIdx) * (GLYPH_DENSITY_MAX - GLYPH_DENSITY_MIN);
-  const drift = BASELINE_DRIFT_MIN + glyphHash(x + 1, y + 7, clusterIdx) * (BASELINE_DRIFT_MAX - BASELINE_DRIFT_MIN);
   const slantDeg = SLANT_MIN + glyphHash(x + 2, y + 13, clusterIdx) * (SLANT_MAX - SLANT_MIN);
   const size = SIZE_MIN + glyphHash(x + 3, y + 19, clusterIdx) * (SIZE_MAX - SIZE_MIN);
   const pressure = PRESSURE_MIN + glyphHash(x + 4, y + 25, clusterIdx) * (PRESSURE_MAX - PRESSURE_MIN);
   const slantRad = (slantDeg * Math.PI) / 180.0;
 
-  const numY = y - scaledSize * 0.7 + drift;
-  const barY = y + drift;
-  const denY = y + scaledSize * 0.7 + drift;
+  const gap = 2;
+  const numY = barY - gap; // numerator baseline about one gap above the bar
+  const denY = barY + scaledSize * 0.55 + gap; // denominator baseline below the bar
 
   // Numerator (right-aligned over bar).
   ctx.save();
@@ -173,7 +177,7 @@ function drawFraction(ctx, num, den, x, y, lineHeightPx, clusterIdx) {
   ctx.fillText(num, 0, 0);
   ctx.restore();
 
-  // Slanted bar.
+  // Slanted bar on the rule line.
   ctx.save();
   ctx.translate(x, barY);
   ctx.rotate(slantRad);
@@ -188,8 +192,6 @@ function drawFraction(ctx, num, den, x, y, lineHeightPx, clusterIdx) {
   ctx.scale(size, size);
   ctx.globalAlpha = density * pressure;
   ctx.fillText(den, 0, 0);
-  ctx.restore();
-
   ctx.restore();
 
   return { x: x + barW, clusterIdx: clusterIdx + 3 };
@@ -208,7 +210,7 @@ function drawFraction(ctx, num, den, x, y, lineHeightPx, clusterIdx) {
  * @param {number} [caretLineY] - Caret baseline Y in CSS px
  * @param {boolean} [caretVisible] - Whether the caret is currently visible
  */
-export function rasterizeText(canvas, text, fontSpec, widthPx, lineHeightPx, originX, originY,
+export function rasterizeText(canvas, text, fontSpec, widthPx, lineHeightPx, lineOffsetPx, lineSpacingPx, originX, originY,
                               caretX = null, caretLineY = null, caretVisible = true) {
   const ctx = canvas.getContext('2d');
   const w = canvas.width;
@@ -236,7 +238,7 @@ export function rasterizeText(canvas, text, fontSpec, widthPx, lineHeightPx, ori
       const cMy = isMyanmarCluster(clusters[j].text);
       if (cMy !== runIsMy) {
         // End current run, start a new one.
-        const res = drawRun(ctx, line.text, x, y, lineHeightPx, clusters, runStart, j, runIsMy, clusterIdx);
+        const res = drawRun(ctx, line.text, x, y, lineHeightPx, lineOffsetPx, lineSpacingPx, clusters, runStart, j, runIsMy, clusterIdx);
         x = res.x;
         clusterIdx = res.clusterIdx;
         runStart = j;
@@ -245,7 +247,7 @@ export function rasterizeText(canvas, text, fontSpec, widthPx, lineHeightPx, ori
     }
     // Draw the final run.
     if (clusters.length > 0) {
-      const res = drawRun(ctx, line.text, x, y, lineHeightPx, clusters, runStart, clusters.length, runIsMy, clusterIdx);
+      const res = drawRun(ctx, line.text, x, y, lineHeightPx, lineOffsetPx, lineSpacingPx, clusters, runStart, clusters.length, runIsMy, clusterIdx);
       x = res.x;
     }
 
